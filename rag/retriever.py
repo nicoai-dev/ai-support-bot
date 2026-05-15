@@ -1,4 +1,6 @@
+import asyncio
 import chromadb
+import logging
 from sentence_transformers import SentenceTransformer
 from rag.loader import load_documents, split_into_chunks
 from config import KNOWLEDGE_BASE_DIR, CHROMA_DB_DIR
@@ -22,48 +24,66 @@ def get_chroma_client():
     return _client
 
 
-def build_index():
-    """Загрузить документы, создать эмбеддинги, сохранить в ChromaDB."""
-    docs = load_documents(KNOWLEDGE_BASE_DIR)
+async def build_index():
+    """Загрузить документы, создать эмбеддинги, сохранить в ChromaDB с метаданными."""
+    docs = await asyncio.to_thread(load_documents, KNOWLEDGE_BASE_DIR)
     if not docs:
-        print("Warning: No documents in knowledge base!")
+        logging.warning("⚠️ В базе знаний нет документов для индексации!")
         return
 
-    chunks = split_into_chunks(docs)
+    chunks = await asyncio.to_thread(split_into_chunks, docs)
     model = get_embedding_model()
-    embeddings = model.encode(chunks).tolist()
+    
+    texts = [c["text"] for c in chunks]
+    metadatas = [{"source": c["source"]} for c in chunks]
+    
+    # Добавляем нормализацию для стабильных дистанций
+    embeddings = await asyncio.to_thread(model.encode, texts, normalize_embeddings=True)
+    embeddings = embeddings.tolist()
 
     client = get_chroma_client()
 
-    # Удалить старую коллекцию если есть
-    try:
-        client.delete_collection("knowledge_base")
-    except Exception:
-        pass
+    def _sync_index_update():
+        # Удалить старую коллекцию если есть
+        try:
+            client.delete_collection("knowledge_base")
+        except Exception:
+            pass
 
-    collection = client.create_collection("knowledge_base")
-    collection.add(
-        documents=chunks,
-        embeddings=embeddings,
-        ids=[f"chunk_{i}" for i in range(len(chunks))],
-    )
-    print(f"Indexed {len(chunks)} chunks")
+        # Создаем коллекцию с косинусным расстоянием
+        collection = client.create_collection(
+            name="knowledge_base", 
+            metadata={"hnsw:space": "cosine"}
+        )
+        
+        collection.add(
+            documents=texts,
+            metadatas=metadatas,
+            embeddings=embeddings,
+            ids=[f"chunk_{i}" for i in range(len(chunks))],
+        )
+
+    await asyncio.to_thread(_sync_index_update)
+    logging.info(f"✅ База знаний успешно обновлена! Проиндексировано чанков: {len(chunks)}")
 
 
-def search(query: str, top_k: int = 5, distance_threshold: float = 2.0) -> list[str]:
+async def search(query: str, top_k: int = 5, distance_threshold: float = 0.8) -> list[str]:
     """Найти top_k самых релевантных чанков по запросу с фильтрацией по дистанции."""
     model = get_embedding_model()
-    query_embedding = model.encode([query]).tolist()
+    # Нормализуем и здесь
+    query_embedding = await asyncio.to_thread(model.encode, [query], normalize_embeddings=True)
+    query_embedding = query_embedding.tolist()
 
     client = get_chroma_client()
     try:
         collection = client.get_collection("knowledge_base")
     except Exception:
-        print("Warning: Index not found. Rebuilding...")
-        build_index()
+        logging.warning("⚠️ Индекс не найден. Пересоздаем...")
+        await build_index()
         collection = client.get_collection("knowledge_base")
 
-    results = collection.query(
+    results = await asyncio.to_thread(
+        collection.query,
         query_embeddings=query_embedding,
         n_results=top_k,
     )
@@ -71,10 +91,16 @@ def search(query: str, top_k: int = 5, distance_threshold: float = 2.0) -> list[
     if not results["documents"] or not results["documents"][0]:
         return []
 
-    # Фильтрация по дистанции (в ChromaDB чем меньше дистанция, тем выше схожесть)
+    # Фильтрация по дистанции
     filtered_chunks = []
-    for doc, dist in zip(results["documents"][0], results["distances"][0]):
-        if dist < distance_threshold:
-            filtered_chunks.append(doc)
+    if results["documents"] and results["distances"] and results["metadatas"]:
+        for doc, dist, meta in zip(results["documents"][0], results["distances"][0], results["metadatas"][0]):
+            source = meta.get("source", "unknown")
+            logging.info(f"🔍 Найден чанк [{source}] (dist: {dist:.4f}): {doc[:60]}...")
+            
+            if dist < distance_threshold:
+                filtered_chunks.append(doc)
+            else:
+                logging.warning(f"⚠️ Чанк из {source} отброшен (dist {dist:.4f} > {distance_threshold})")
             
     return filtered_chunks

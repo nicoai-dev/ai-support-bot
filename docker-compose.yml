@@ -1,0 +1,10 @@
+services:
+  bot:
+    build: .
+    volumes:
+      - ./data/knowledge_base:/app/data/knowledge_base
+      - ./data/db:/app/data/db
+    env_file:
+      - .env
+    restart: always
+    network_mode: "host" # Позволяет боту видеть Ollama, запущенную локально на Windows (через localhost)

@@ -4,6 +4,14 @@ from dotenv import load_dotenv
 load_dotenv()
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
+
+if not BOT_TOKEN:
+    print("\n" + "="*50)
+    print("[!] ОШИБКА: BOT_TOKEN не найден в окружении.")
+    print("Убедитесь, что вы создали файл .env и добавили в него:")
+    print("BOT_TOKEN=ваш_токен_из_BotFather")
+    print("="*50 + "\n")
+    exit(1)
 OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
 OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "qwen2.5-coder:32b")
 

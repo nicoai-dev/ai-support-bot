@@ -11,6 +11,8 @@ from bot.memory import memory
 router = Router()
 
 RATE_LIMIT = 3.0  # Секунды между сообщениями
+MAX_CONCURRENT_GENERATIONS = 2
+generation_semaphore = asyncio.Semaphore(MAX_CONCURRENT_GENERATIONS)
 
 
 def get_main_keyboard():
@@ -88,12 +90,17 @@ async def handle_message(message: types.Message):
     try:
         chat_history = memory.get_history(user_id)
         
-        # Формируем запрос для поиска (берем только текущее сообщение, чтобы не шуметь)
-        # LLM и так увидит историю, а поиск лучше работает по короткому и четкому запросу
+        # Формируем запрос для поиска с учетом контекста диалога
+        # Склеиваем текущий вопрос с последними сообщениями пользователя для точности RAG
         search_query = message.text
+        if chat_history:
+            last_user_messages = [m.text for m in chat_history if m.role == "user"][-2:]
+            if last_user_messages:
+                search_query = " ".join(last_user_messages + [message.text])
+                logging.info(f"🧠 Контекстный поиск: '{search_query}'")
         
         # 1. Поиск релевантных чанков
-        chunks = search(search_query, top_k=3)
+        chunks = await search(search_query, top_k=3)
         
         # ЛОГ ДЛЯ ОТЛАДКИ (увидишь в консоли, что нашел бот)
         if chunks:
@@ -107,23 +114,28 @@ async def handle_message(message: types.Message):
         full_answer = ""
         last_edit_time = time.time()
         
-        async for partial_answer in generate_answer_stream(message.text, chunks, chat_history):
-            if not partial_answer:
-                continue
-                
-            full_answer = partial_answer
-            # Обновляем каждые 0.7 сек для плавности (баланс между UX и лимитами Telegram)
-            now = time.time()
-            if now - last_edit_time > 0.7:
-                try:
-                    await processing_msg.edit_text(partial_answer + " ▌")
-                    last_edit_time = now
-                except Exception:
-                    pass
+        async with generation_semaphore:
+            async for partial_answer in generate_answer_stream(message.text, chunks, chat_history):
+                if not partial_answer:
+                    continue
+                    
+                full_answer = partial_answer
+                # Обновляем каждые 0.7 сек для плавности (баланс между UX и лимитами Telegram)
+                now = time.time()
+                if now - last_edit_time > 0.7:
+                    try:
+                        await processing_msg.edit_text(partial_answer + " ▌")
+                        last_edit_time = now
+                    except Exception:
+                        pass
 
         # Финальный текст
         if full_answer:
             await processing_msg.edit_text(full_answer)
+        else:
+            await processing_msg.edit_text(
+                "К сожалению, не удалось сформировать ответ. Попробуйте переформулировать вопрос или обратитесь к менеджеру по телефону +7 (999) 000-00-00."
+            )
         
         # Сохраняем диалог в память
         memory.add_message(user_id, "user", message.text)
