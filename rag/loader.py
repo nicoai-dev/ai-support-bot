@@ -18,12 +18,12 @@ def load_documents(knowledge_dir: str) -> list[dict]:
     return documents
 
 
-def split_into_chunks(documents: list[dict], chunk_size: int = 500, chunk_overlap: int = 50) -> list[dict]:
+def split_into_chunks(documents: list[dict], chunk_size: int = 800, chunk_overlap: int = 150) -> list[dict]:
     """Разбить документы на чанки, сохраняя метаданные."""
     splitter = RecursiveCharacterTextSplitter(
         chunk_size=chunk_size,
         chunk_overlap=chunk_overlap,
-        separators=["\n\n", "\n", ". ", " ", ""],
+        separators=["\n===", "\n---", "\n\n", "\n", ". ", " ", ""],
     )
     all_chunks = []
     for doc in documents:

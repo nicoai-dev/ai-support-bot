@@ -90,25 +90,26 @@ async def handle_message(message: types.Message):
     try:
         chat_history = memory.get_history(user_id)
         
-        # Формируем запрос для поиска с учетом контекста диалога
-        # Склеиваем текущий вопрос с последними сообщениями пользователя для точности RAG
-        search_query = message.text
-        if chat_history:
-            last_user_messages = [m.text for m in chat_history if m.role == "user"][-2:]
-            if last_user_messages:
-                search_query = " ".join(last_user_messages + [message.text])
-                logging.info(f"🧠 Контекстный поиск: '{search_query}'")
-        
         # 1. Поиск релевантных чанков
-        chunks = await search(search_query, top_k=3)
+        chunks = await search(message.text, top_k=8, distance_threshold=0.9)
         
         # ЛОГ ДЛЯ ОТЛАДКИ (увидишь в консоли, что нашел бот)
         if chunks:
             logging.info(f"🔎 Найдено чанков: {len(chunks)}")
             for i, c in enumerate(chunks):
-                logging.info(f"Чанк {i+1}: {c[:50]}...")
+                logging.info(f"Чанк {i+1}: {c['text'][:50]}...")
         else:
-            logging.warning("⚠️ Ничего не найдено в базе знаний!")
+            logging.warning("⚠️ Ничего не найдено в базе знаний! Использую fallback.")
+            fallback_answer = (
+                "К сожалению, у меня нет точной информации по этому вопросу в текущей базе знаний. "
+                "Давайте я соединю вас с менеджером — он точно во всём разберётся!\n\n"
+                "📞 +679 764-2658 (08:00–22:00)\n"
+                "📧 support@nicomarket.fj"
+            )
+            await processing_msg.edit_text(fallback_answer)
+            memory.add_message(user_id, "user", message.text)
+            memory.add_message(user_id, "assistant", fallback_answer)
+            return
 
         # 2. Потоковая генерация ответа
         full_answer = ""
@@ -120,26 +121,51 @@ async def handle_message(message: types.Message):
                     continue
                     
                 full_answer = partial_answer
-                # Обновляем каждые 0.7 сек для плавности (баланс между UX и лимитами Telegram)
+                # Обновляем каждые 1.5 сек для безопасности (лимиты Telegram)
                 now = time.time()
-                if now - last_edit_time > 0.7:
+                if now - last_edit_time > 1.5:
                     try:
                         await processing_msg.edit_text(partial_answer + " ▌")
                         last_edit_time = now
-                    except Exception:
+                    except Exception as edit_error:
+                        # Если поймали флуд или другую ошибку редактирования — просто пропускаем шаг
+                        logging.debug(f"Пропуск обновления стриминга: {edit_error}")
                         pass
 
-        # Финальный текст
+        from rag.guardrails import validate_response
+
+        # Финальный текст и валидация
         if full_answer:
-            await processing_msg.edit_text(full_answer)
+            validated_answer, warnings = validate_response(full_answer)
+            
+            if warnings:
+                logging.warning(f"⚠️ Guardrails сработали для user {user_id}: {warnings}")
+                # Если слишком много подозрений — подменяем на безопасный ответ
+                if len(warnings) >= 3:
+                    validated_answer = (
+                        "Прошу прощения, я не уверен в точности своего ответа на этот вопрос. "
+                        "Чтобы не ввести вас в заблуждение, лучше уточните это у нашего менеджера.\n\n"
+                        "📞 +679 764-2658\n📧 support@nicomarket.fj"
+                    )
+            
+            await processing_msg.edit_text(validated_answer)
+            
+            # Лог для аудита галлюцинаций
+            logging.info(
+                f"📊 AUDIT | user={user_id} | "
+                f"query='{message.text[:80]}' | "
+                f"chunks_found={len(chunks)} | "
+                f"guardrail_warnings={len(warnings)} | "
+                f"answer_len={len(validated_answer)}"
+            )
+            
+            # Сохраняем диалог в память
+            memory.add_message(user_id, "user", message.text)
+            memory.add_message(user_id, "assistant", validated_answer)
         else:
             await processing_msg.edit_text(
-                "К сожалению, не удалось сформировать ответ. Попробуйте переформулировать вопрос или обратитесь к менеджеру по телефону +7 (999) 000-00-00."
+                "К сожалению, не удалось сформировать ответ. Попробуйте переформулировать вопрос или обратитесь к менеджеру по телефону +679 764-2658."
             )
-        
-        # Сохраняем диалог в память
-        memory.add_message(user_id, "user", message.text)
-        memory.add_message(user_id, "assistant", full_answer)
 
     except Exception as e:
         logging.error(f"Ошибка при обработке сообщения: {e}")

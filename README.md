@@ -12,7 +12,7 @@ An advanced, production-ready AI support assistant built for Telegram. It levera
   - Uses `SentenceTransformers` and `ChromaDB` for semantic context retrieval.
   - Optimized with `cosine` distance metrics and normalized embeddings for high precision.
   - **Context-Aware Search**: Dynamically analyzes the user's conversational history to understand multi-turn follow-up questions.
-- **Anti-Hallucination Mechanisms**: Strict system prompts prevent the model from inventing non-existent products, services, or fake URLs. If it's not in the knowledge base, the bot admits it doesn't know.
+- **Anti-Hallucination Mechanisms**: Strict system prompts prevent the model from inventing non-existent products, services, or fake URLs. Additionally, programmatic **Guardrails** (regex validation) proactively filter out fabricated emails, phones, and links.
 - **Asynchronous & Non-Blocking**: Built on `aiogram 3.x` with `asyncio.to_thread` executors. Heavy vector calculations (embeddings) run in separate threads, preventing event-loop freezing.
 - **Production-Ready & Stable**: 
   - Global `ErrorHandlingMiddleware` catches exceptions and politely notifies users.

@@ -67,7 +67,7 @@ async def build_index():
     logging.info(f"✅ База знаний успешно обновлена! Проиндексировано чанков: {len(chunks)}")
 
 
-async def search(query: str, top_k: int = 5, distance_threshold: float = 0.8) -> list[str]:
+async def search(query: str, top_k: int = 8, distance_threshold: float = 0.9) -> list[dict]:
     """Найти top_k самых релевантных чанков по запросу с фильтрацией по дистанции."""
     model = get_embedding_model()
     # Нормализуем и здесь
@@ -99,7 +99,11 @@ async def search(query: str, top_k: int = 5, distance_threshold: float = 0.8) ->
             logging.info(f"🔍 Найден чанк [{source}] (dist: {dist:.4f}): {doc[:60]}...")
             
             if dist < distance_threshold:
-                filtered_chunks.append(doc)
+                filtered_chunks.append({
+                    "text": doc,
+                    "source": source,
+                    "distance": dist
+                })
             else:
                 logging.warning(f"⚠️ Чанк из {source} отброшен (dist {dist:.4f} > {distance_threshold})")
             

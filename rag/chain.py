@@ -58,20 +58,25 @@ async def check_ollama_health() -> bool:
         return False
 
 
-async def generate_answer_stream(question: str, context_chunks: list[str], chat_history: list = None):
+async def generate_answer_stream(question: str, context_chunks: list[dict], chat_history: list = None):
     """Потоковая генерация ответа через Ollama Chat API."""
-    context = "\n\n".join(context_chunks)
+    # Извлекаем текст из новых словарей для обратной совместимости промпта
+    text_chunks = [chunk.get("text", "") for chunk in context_chunks]
+    context = "\n\n".join(text_chunks)
     
     messages = [
-        {"role": "system", "content": f"{SYSTEM_PROMPT}\n\nКОНТЕКСТ ИЗ БАЗЫ ЗНАНИЙ:\n{context}"}
+        {"role": "system", "content": SYSTEM_PROMPT}
     ]
     
     if chat_history:
+        # Добавляем динамическое правило для предотвращения постоянных приветствий
+        messages[0]["content"] += "\n\nВАЖНО: Это продолжение диалога. ЗАПРЕЩЕНО здороваться и представляться заново."
+        
         for msg in chat_history:
             role = "user" if msg.role == "user" else "assistant"
             messages.append({"role": role, "content": msg.text})
-    
-    messages.append({"role": "user", "content": question})
+            
+    messages.append({"role": "user", "content": f"ВОПРОС: {question}\n\nКОНТЕКСТ ИЗ БАЗЫ ЗНАНИЙ:\n{context}"})
 
     try:
         session = await get_session()
@@ -84,6 +89,8 @@ async def generate_answer_stream(question: str, context_chunks: list[str], chat_
                 "options": {
                     "temperature": 0.5,
                     "num_predict": 512,
+                    "repeat_penalty": 1.1,
+                    "top_p": 0.9,
                 },
             }
         ) as response:
