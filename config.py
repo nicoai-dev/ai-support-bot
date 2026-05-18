@@ -21,8 +21,8 @@ KNOWLEDGE_BASE_DIR = os.path.join(BASE_DIR, "data", "knowledge_base")
 CHROMA_DB_DIR = os.path.join(BASE_DIR, "data", "chroma_db")
 
 # Memory settings
-MEMORY_MAX_MESSAGES = 10
-MEMORY_SESSION_TTL = 1800
+MEMORY_MAX_MESSAGES = 4
+MEMORY_SESSION_TTL = 600
 
 # Ollama settings
 OLLAMA_TIMEOUT = 180

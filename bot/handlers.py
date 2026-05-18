@@ -11,7 +11,7 @@ from bot.memory import memory
 router = Router()
 
 RATE_LIMIT = 3.0  # Секунды между сообщениями
-MAX_CONCURRENT_GENERATIONS = 2
+MAX_CONCURRENT_GENERATIONS = 1
 generation_semaphore = asyncio.Semaphore(MAX_CONCURRENT_GENERATIONS)
 
 
