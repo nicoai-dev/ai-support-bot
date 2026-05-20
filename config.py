@@ -14,6 +14,7 @@ if not BOT_TOKEN:
     exit(1)
 OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
 OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "qwen2.5-coder:32b")
+WEBAPP_URL = os.getenv("WEBAPP_URL", "https://nico-market-catalog.loca.lt")
 
 # Paths
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))

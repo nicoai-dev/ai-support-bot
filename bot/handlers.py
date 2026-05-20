@@ -4,6 +4,8 @@ import asyncio
 from aiogram import Router, types
 from aiogram.filters import CommandStart, Command
 from aiogram.utils.keyboard import InlineKeyboardBuilder
+from aiogram.types import ReplyKeyboardMarkup, KeyboardButton, WebAppInfo
+import config
 from rag.retriever import search
 from rag.chain import generate_answer_stream
 from bot.memory import memory
@@ -13,6 +15,31 @@ router = Router()
 RATE_LIMIT = 3.0  # Секунды между сообщениями
 MAX_CONCURRENT_GENERATIONS = 1
 generation_semaphore = asyncio.Semaphore(MAX_CONCURRENT_GENERATIONS)
+
+
+def get_reply_keyboard(user_id: int = 0, first_name: str = "Гость", photo_url: str = ""):
+    from urllib.parse import quote
+    encoded_name = quote(first_name or "Гость")
+    encoded_photo = quote(photo_url or "")
+    url = f"{config.WEBAPP_URL}?user_id={user_id}&first_name={encoded_name}&photo_url={encoded_photo}"
+    return ReplyKeyboardMarkup(
+        keyboard=[
+            [KeyboardButton(text="🛒 Каталог Nico Market", web_app=WebAppInfo(url=url))]
+        ],
+        resize_keyboard=True
+    )
+
+
+async def get_user_photo_url(message: types.Message) -> str:
+    try:
+        photos = await message.bot.get_user_profile_photos(user_id=message.from_user.id, limit=1)
+        if photos.total_count > 0:
+            file_id = photos.photos[0][-1].file_id
+            file_info = await message.bot.get_file(file_id)
+            return f"https://api.telegram.org/file/bot{config.BOT_TOKEN}/{file_info.file_path}"
+    except Exception as e:
+        logging.error(f"Error fetching user profile photo: {e}")
+    return ""
 
 
 def get_main_keyboard():
@@ -25,10 +52,15 @@ def get_main_keyboard():
 
 @router.message(CommandStart())
 async def cmd_start(message: types.Message):
+    photo_url = await get_user_photo_url(message)
     await message.answer(
         "👋 Добро пожаловать в Nico Market!\n\n"
         "Я ваш виртуальный помощник. Задайте мне любой вопрос о наших товарах или правилах магазина.\n\n"
         "Чем я могу вам помочь сегодня?",
+        reply_markup=get_reply_keyboard(message.from_user.id, message.from_user.first_name, photo_url)
+    )
+    await message.answer(
+        "💡 Для быстрого доступа используйте кнопки ниже или меню:",
         reply_markup=get_main_keyboard()
     )
 
@@ -49,7 +81,8 @@ async def cmd_help(message: types.Message):
 @router.message(Command("new"))
 async def cmd_new(message: types.Message):
     memory.clear(message.from_user.id)
-    await message.answer("🔄 Контекст диалога сброшен. Начнем сначала!")
+    photo_url = await get_user_photo_url(message)
+    await message.answer("🔄 Контекст диалога сброшен. Начнем сначала!", reply_markup=get_reply_keyboard(message.from_user.id, message.from_user.first_name, photo_url))
 
 
 @router.callback_query()
@@ -59,27 +92,72 @@ async def handle_callbacks(callback: types.CallbackQuery):
     elif callback.data == "return_policy":
         await callback.message.answer("🔄 У нас действует возврат в течение 14 дней при сохранности товарного вида. Что именно вы хотите вернуть?")
     elif callback.data == "contact_manager":
-        await callback.message.answer("📞 Наш менеджер на связи по телефону: +7 (999) 000-00-00.\nГрафик работы: ежедневно с 9:00 до 21:00.")
+        await callback.message.answer(
+            "📞 **Служба поддержки Nico Market**\n\n"
+            "Наш менеджер готов помочь вам по любым вопросам:\n"
+            "• **Телефон:** `+679 764-2658` *(нажмите для копирования)*\n"
+            "• **Режим работы:** Ежедневно с 08:00 до 22:00 (FJT / UTC+12)\n\n"
+            "Вы можете позвонить нам напрямую или продолжить общение со мной здесь!",
+            parse_mode="Markdown"
+        )
     await callback.answer()
+
+
+import json
+from aiogram import F
+
+@router.message(F.web_app_data)
+async def handle_web_app_data(message: types.Message):
+    try:
+        data = json.loads(message.web_app_data.data)
+        items = data.get("items", {})
+        total = data.get("total", 0)
+        
+        photo_url = await get_user_photo_url(message)
+        if not items:
+            await message.answer("🛒 Ваша корзина пуста!", reply_markup=get_reply_keyboard(message.from_user.id, message.from_user.first_name, photo_url))
+            return
+            
+        receipt = "🛒 **Ваш заказ успешно принят!**\n\n"
+        for item_id, item in items.items():
+            receipt += f"• {item['title']} — {item['count']} шт. (${item['price']} / шт.)\n"
+            
+        receipt += f"\n💵 **Итого к оплате: ${total}**\n\n"
+        receipt += (
+            "Спасибо за покупку в Nico Market! Наш менеджер свяжется с вами в ближайшее время для подтверждения доставки.\n\n"
+            "📞 +679 764-2658 (08:00–22:00)\n"
+            "📧 support@nicomarket.fj"
+        )
+        
+        await message.answer(receipt, parse_mode="Markdown", reply_markup=get_reply_keyboard(message.from_user.id, message.from_user.first_name, photo_url))
+        
+        # Сохраняем информацию о заказе в историю диалога (контекст ИИ)
+        user_msg = "Оформил заказ в каталоге: " + ", ".join([f"{item['title']} ({item['count']} шт.)" for item in items.values()]) + f" на сумму ${total}"
+        memory.add_message(message.from_user.id, "user", user_msg)
+        memory.add_message(message.from_user.id, "assistant", receipt)
+    except Exception as e:
+        logging.error(f"Ошибка парсинга данных MiniApp: {e}")
+        await message.answer("⚠️ Произошла ошибка при обработке вашего заказа. Пожалуйста, попробуйте снова.", reply_markup=get_reply_keyboard(message.from_user.id, message.from_user.first_name, photo_url))
 
 
 @router.message()
 async def handle_message(message: types.Message):
     user_id = message.from_user.id
+    photo_url = await get_user_photo_url(message)
     
     # Rate limiting через объект memory
     if not memory.check_rate_limit(user_id, RATE_LIMIT):
-        await message.answer("⚠️ Вы отправляете сообщения слишком часто. Пожалуйста, подождите пару секунд.")
+        await message.answer("⚠️ Вы отправляете сообщения слишком часто. Пожалуйста, подождите пару секунд.", reply_markup=get_reply_keyboard(message.from_user.id, message.from_user.first_name, photo_url))
         return
 
     # Обработка нетекстовых сообщений
     if not message.text:
-        await message.answer("Я пока работаю только с текстом. Пожалуйста, напишите ваш вопрос.")
+        await message.answer("Я пока работаю только с текстом. Пожалуйста, напишите ваш вопрос.", reply_markup=get_reply_keyboard(message.from_user.id, message.from_user.first_name, photo_url))
         return
 
     # Проверка длины сообщения
     if len(message.text) > 1000:
-        await message.answer("Ваше сообщение слишком длинное. Пожалуйста, сократите его до 1000 символов.")
+        await message.answer("Ваше сообщение слишком длинное. Пожалуйста, сократите его до 1000 символов.", reply_markup=get_reply_keyboard(message.from_user.id, message.from_user.first_name, photo_url))
         return
 
     # Показываем статус "печатает"

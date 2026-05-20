@@ -1,0 +1,107 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Nico Market Catalog</title>
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="style.css?v=1.4.0">
+</head>
+<body>
+    <div id="app">
+        <!-- Header -->
+        <header class="app-header">
+            <button id="cart-icon-btn" class="cart-icon-btn" onclick="openCartModal()">
+                🛒
+                <span id="cart-badge" class="cart-badge">0</span>
+            </button>
+            <div class="user-info-centered">
+                <div id="user-avatar" class="avatar">N</div>
+                <h3 id="user-greeting">Привет, Гость!</h3>
+                <p>Добро пожаловать в Nico Market</p>
+            </div>
+        </header>
+
+        <!-- Search Bar -->
+        <div class="search-container">
+            <div class="search-wrapper">
+                <span class="search-icon">🔍</span>
+                <input type="text" id="search-input" placeholder="Поиск товаров и услуг..." autocomplete="off">
+                <button id="search-clear-btn" class="search-clear-btn">&times;</button>
+            </div>
+        </div>
+
+        <!-- Categories -->
+        <div class="categories-tabs">
+            <button class="tab-btn active" data-category="hardware">Устройства</button>
+            <button class="tab-btn" data-category="software">Софт</button>
+            <button class="tab-btn" data-category="services">Услуги</button>
+        </div>
+
+        <!-- Catalog Grid -->
+        <main class="catalog-grid" id="catalog-container">
+            <!-- Динамические товары загрузятся здесь -->
+        </main>
+
+        <!-- Floating Cart Bar -->
+        <div class="cart-bar" id="cart-bar">
+            <div class="cart-info">
+                <span class="cart-count" id="cart-count">0 товаров</span>
+                <span class="cart-total" id="cart-total">$0</span>
+            </div>
+            <button class="btn-checkout" id="btn-checkout">Оформить заказ</button>
+        </div>
+    </div>
+
+    <!-- Product Detail Modal -->
+    <div id="product-modal" class="modal-overlay">
+        <div class="modal-content glass">
+            <button class="modal-close-btn" id="modal-close-btn">&times;</button>
+            <div class="modal-body">
+                <div id="modal-product-emoji" class="modal-emoji">📱</div>
+                <h2 id="modal-product-title" class="modal-title">Название товара</h2>
+                <div id="modal-product-badge" class="modal-badge">Категория</div>
+                <div id="modal-product-price" class="modal-price">$0</div>
+                
+                <div class="modal-description-section">
+                    <div class="modal-section-title">Описание товара</div>
+                    <div id="modal-product-desc" class="modal-desc-full">Детальное описание...</div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <div class="modal-quantity-controls" id="modal-quantity-controls">
+                    <button class="qty-btn minus" id="modal-qty-minus" onclick="adjustModalQty(-1)">-</button>
+                    <span class="qty-count" id="modal-qty-count">0</span>
+                    <button class="qty-btn plus" id="modal-qty-plus" onclick="adjustModalQty(1)">+</button>
+                </div>
+                <button class="btn-checkout" id="modal-btn-action" onclick="handleModalAction()">Добавить в корзину</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Cart Detail Modal -->
+    <div id="cart-modal" class="modal-overlay">
+        <div class="modal-content glass">
+            <button class="modal-close-btn" id="cart-modal-close-btn">&times;</button>
+            <div class="modal-body" style="padding-top: 25px;">
+                <h2 class="modal-title" style="margin-bottom: 15px;">🛒 Ваша корзина</h2>
+                
+                <div id="cart-items-container" class="cart-items-list">
+                    <!-- Список товаров в корзине будет генерироваться динамически -->
+                </div>
+                
+                <div class="cart-total-section">
+                    <span>Итого к оплате:</span>
+                    <span id="cart-modal-total-price" class="cart-modal-total">$0</span>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn-checkout" id="cart-modal-btn-checkout" onclick="checkoutOrder()" style="width: 100%;">Оформить заказ</button>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://telegram.org/js/telegram-web-app.js"></script>
+    <script src="app.js?v=1.4.0"></script>
+</body>
+</html>

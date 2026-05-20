@@ -27,6 +27,16 @@ async def cleanup_loop():
             logging.error(f"Ошибка в цикле очистки памяти: {e}")
             await asyncio.sleep(10)  # Пауза перед повторной попыткой при ошибке
 
+async def wakeup_loop():
+    """Фоновая задача для периодического пробуждения event loop на Windows,
+    чтобы корректно и быстро обрабатывался Ctrl+C.
+    """
+    while True:
+        try:
+            await asyncio.sleep(0.5)
+        except asyncio.CancelledError:
+            break
+
 from rag.chain import close_session, check_ollama_health
 
 
@@ -68,6 +78,12 @@ async def main():
 
     cleanup_task.add_done_callback(handle_task_result)
     
+    # Запускаем фоновую wakeup-задачу на Windows для мгновенной реакции на Ctrl+C
+    import sys
+    wakeup_task = None
+    if sys.platform == "win32":
+        wakeup_task = asyncio.create_task(wakeup_loop())
+    
     # Запуск поллинга
     try:
         await dp.start_polling(bot)
@@ -75,6 +91,9 @@ async def main():
         # Graceful shutdown: отменяем фоновые задачи и закрываем сессии
         logging.info("Завершение работы...")
         cleanup_task.cancel()
+        if wakeup_task:
+            wakeup_task.cancel()
+            
         try:
             await asyncio.wait_for(cleanup_task, timeout=5.0)
         except (asyncio.CancelledError, asyncio.TimeoutError):

@@ -18,6 +18,10 @@ An advanced, production-ready AI support assistant built for Telegram. It levera
   - Global `ErrorHandlingMiddleware` catches exceptions and politely notifies users.
   - Background memory cleanup loop automatically purges stale user sessions.
   - Docker & Docker Compose integration for seamless 1-click deployment.
+- **Telegram Mini App Integration**: Includes a fully responsive WebApp frontend serving as a modern storefront.
+  - Live search and category filters (Hardware, Software, Services).
+  - Interactive shopping cart with real-time sync and dynamic product modals.
+  - Automated environment startup via `run_all.py` (bot, RAG, WebApp server, and ssh tunnels).
 
 ## 🛠 Technology Stack
 
