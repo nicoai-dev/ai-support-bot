@@ -1,4 +1,4 @@
-<![CDATA[# ИИ Бот-Саппорт — Nico Market
+# ИИ Бот-Саппорт — Nico Market
 
 [![Русский](https://img.shields.io/badge/🇷🇺_Русский-blue.svg)](README_RU.md)
 [![English](https://img.shields.io/badge/🇬🇧_English-red.svg)](README.md)
@@ -252,4 +252,3 @@ python -m pytest tests/ -v
 ## 📄 Лицензия
 
 Проект предоставляется «как есть» для образовательных и портфолио-целей.
-]]>

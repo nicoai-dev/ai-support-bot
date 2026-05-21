@@ -1,4 +1,4 @@
-<![CDATA[# AI Support Bot — Nico Market
+# AI Support Bot — Nico Market
 
 [![Russian](https://img.shields.io/badge/🇷🇺_Русский-blue.svg)](README_RU.md)
 [![English](https://img.shields.io/badge/🇬🇧_English-red.svg)](README.md)
@@ -252,4 +252,3 @@ Inline buttons: **Order status**, **Return policy**, **Contact manager**.
 ## 📄 License
 
 This project is provided as-is for educational and portfolio purposes.
-]]>
