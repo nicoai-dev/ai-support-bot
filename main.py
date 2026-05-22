@@ -7,11 +7,41 @@ from rag.retriever import build_index
 from bot.memory import memory
 from bot.middleware import ErrorHandlingMiddleware
 
-# Настройка логирования
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s - %(levelname)s - %(message)s"
-)
+import logging.handlers
+import json
+import sys
+import os
+
+class JSONFormatter(logging.Formatter):
+    def format(self, record):
+        log_entry = {
+            "ts": self.formatTime(record),
+            "level": record.levelname,
+            "logger": record.name,
+            "msg": record.getMessage(),
+        }
+        if record.exc_info:
+            log_entry["exc"] = self.formatException(record.exc_info)
+        return json.dumps(log_entry, ensure_ascii=False)
+
+def setup_logging(log_dir: str = "logs", level: str = "INFO"):
+    root = logging.getLogger()
+    root.setLevel(getattr(logging, level))
+    
+    # Console — human-readable
+    console = logging.StreamHandler(sys.stdout)
+    console.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(message)s"))
+    root.addHandler(console)
+    
+    # File — JSON, с ротацией
+    os.makedirs(log_dir, exist_ok=True)
+    file_handler = logging.handlers.RotatingFileHandler(
+        f"{log_dir}/bot.jsonl", maxBytes=50_000_000, backupCount=5
+    )
+    file_handler.setFormatter(JSONFormatter())
+    root.addHandler(file_handler)
+
+setup_logging()
 
 async def cleanup_loop():
     """Периодическая очистка протухших сессий из памяти."""
@@ -19,7 +49,7 @@ async def cleanup_loop():
         try:
             await asyncio.sleep(300)  # Очистка каждые 5 минут
             logging.info("Очистка истёкших сессий памяти...")
-            memory.cleanup_expired()
+            await memory.cleanup_expired()
         except asyncio.CancelledError:
             logging.info("Задача очистки памяти остановлена.")
             break
@@ -42,6 +72,11 @@ from rag.chain import close_session, check_ollama_health
 
 async def on_startup(bot: Bot):
     """Действия при запуске бота."""
+    from config import STORAGE_BACKEND
+    if STORAGE_BACKEND == "postgres":
+        from bot.memory import init_postgres_memory
+        logging.info("Подключение к PostgreSQL...")
+        await init_postgres_memory()
     logging.info("🔎 Проверка связи с Ollama...")
     if not await check_ollama_health():
         logging.error("❌ КРИТИЧЕСКАЯ ОШИБКА: Сервис Ollama недоступен! Запустите Ollama и попробуйте снова.")
@@ -50,7 +85,25 @@ async def on_startup(bot: Bot):
 
     logging.info("🚀 Обновление индекса базы знаний...")
     await build_index()
+    
+    from bot.health import start_health_server
+    global health_runner
+    health_runner = await start_health_server()
+    logging.info("⚕️ Healthcheck server запущен на порту 8080")
+    
     logging.info("🚀 Бот Nico Market запущен!")
+
+    # Инициализация ARQ
+    try:
+        from arq import create_pool
+        from arq.connections import RedisSettings
+        from config import REDIS_URL
+        import bot.handlers
+
+        bot.handlers.arq_pool = await create_pool(RedisSettings.from_dsn(REDIS_URL))
+        logging.info("✅ ARQ Pool инициализирован")
+    except Exception as e:
+        logging.warning(f"⚠️ Ошибка инициализации ARQ: {e}")
 
 async def main():
     # Инициализация бота и диспетчера
@@ -102,6 +155,11 @@ async def main():
         from rag.chain import close_session
         await close_session()
         await bot.session.close()
+        
+        global health_runner
+        if 'health_runner' in globals() and health_runner:
+            await health_runner.cleanup()
+            
         logging.info("Бот Nico Market успешно остановлен.")
 
 if __name__ == "__main__":

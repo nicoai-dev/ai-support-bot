@@ -112,7 +112,11 @@ ai-support-bot/
 | **LLM-движок** | `Ollama` (модель по умолчанию: `qwen2.5-coder:32b`) |
 | **Эмбеддинги** | `sentence-transformers` (`paraphrase-multilingual-MiniLM-L12-v2`) |
 | **Векторная БД** | `ChromaDB` (персистентная, косинусная метрика) |
-| **Разбивка текста** | `langchain-text-splitters` (`RecursiveCharacterTextSplitter`) |
+| **Лексический поиск**| Собственный `BM25Index` (ранжирование tf-idf) |
+| **Ренкер-модель** | `sentence-transformers` (`cross-encoder/mmarco-mMiniLMv2-L12-H384-v1`) |
+| **Фоновые задачи** | `arq` (очереди на Redis) + кэширование `redis` |
+| **Хранилище данных**| `asyncpg` + PostgreSQL (длительные сессии) или локальный SQLite |
+| **Конфигурация** | `pydantic-settings` (v2 валидация переменных окружения) |
 | **HTTP-клиент** | `aiohttp` (паттерн singleton-сессии) |
 | **WebApp** | Vanilla HTML/CSS/JS + Telegram WebApp API |
 | **Туннель** | SSH к `localhost.run` (автоуправление) |
@@ -185,6 +189,9 @@ docker-compose up --build -d
 | `OLLAMA_BASE_URL` | `http://localhost:11434` | Эндпоинт Ollama API |
 | `OLLAMA_MODEL` | `qwen2.5-coder:32b` | Название модели LLM |
 | `WEBAPP_URL` | `https://nico-market-catalog.loca.lt` | Публичный URL WebApp (автоматически обновляется `run_all.py`) |
+| `STORAGE_BACKEND` | `memory` | Адаптер хранения сессий: `memory` (SQLite) или `postgres` |
+| `DATABASE_URL` | — | DSN строка подключения к PostgreSQL базе данных |
+| `REDIS_URL` | `redis://localhost:6379/0` | Адрес подключения к Redis для кэширования и ARQ воркера |
 
 ---
 
@@ -192,20 +199,21 @@ docker-compose up --build -d
 
 Знания бота берутся из обычных `.txt` файлов в `data/knowledge_base/`. При старте они:
 1. Загружаются и разбиваются на чанки (800 символов, перекрытие 150).
-2. Векторизуются моделью `paraphrase-multilingual-MiniLM-L12-v2`.
-3. Сохраняются в ChromaDB с метаданными об источнике.
+2. Индексируются параллельно в `ChromaDB` (векторы) и в `BM25Index` (лексический поиск).
+3. Используются на рантайме со слиянием RRF и последующим нейросетевым Cross-Encoder переранжированием.
 
 Текущая структура базы знаний:
-| Файл | Содержание |
-|------|-----------|
-| `01_about.txt` | Информация о компании и история |
-| `02_contacts.txt` | Официальные контакты и часы работы |
-| `03_catalog.txt` | Полный каталог товаров с ценами |
-| `04_policies.txt` | Политики возврата, доставки и гарантии |
-| `05_subscriptions.txt` | Подписочные планы |
-| `06_faq.txt` | Часто задаваемые вопросы |
-| `07_team.txt` | Команда |
-| `08_bot_persona.txt` | Личность и правила поведения бота |
+| Категории | Файлы источников | Содержание |
+|-----------|------------------|------------|
+| **О компании** | `about_company.txt`, `about_history.txt` | Информация о бренде Nico Market, миссия, история создания и основные этапы развития. |
+| **Бот-персона** | `bot_persona_rules.txt`, `bot_persona_story.txt` | Инструкция личности Нико, правила ведения диалога, тон общения, примеры ответов. |
+| **Каталог устройств** | `catalog_overview.txt`, `catalog_a1_smartphones.txt` ... `catalog_a7_drones_cameras.txt` | Подробные спецификации товаров, характеристики и ценовые диапазоны, разбитые по файлам. |
+| **Каталог услуг** | `catalog_b1_software.txt` ... `catalog_b4_games.txt`, `catalog_c_dev_design.txt`, `catalog_c_support_security.txt` | ПО, облачные ресурсы, услуги разработки чат-ботов, игровой аутсорсинг, администрирование. |
+| **Контакты поддержки**| `contacts.txt` | Адреса офисов, телефоны, email-ящики подразделений, каналы связи, график работы. |
+| **Справка и FAQ** | `faq_general.txt`, `faq_orders_delivery.txt`, `faq_returns_warranty.txt` | Базовые ответы на часто задаваемые вопросы клиентов. |
+| **Политики** | `policy_delivery.txt`, `policy_payment.txt`, `policy_returns.txt`, `policy_warranty.txt` | Регламенты оплаты, доставки посылок, условия гарантийного обслуживания и возврата. |
+| **Подписки** | `subscriptions.txt` | Сетки тарифов регулярного обслуживания, облачный хостинг, SLA-условия. |
+| **Команда** | `team.txt` | Справочник сотрудников, их роли, должности и отделы. |
 
 Для обновления: отредактируйте/добавьте `.txt` файлы и перезапустите бота — индекс пересоберётся автоматически.
 
@@ -235,17 +243,17 @@ python -m pytest tests/ -v
 
 ## ⚙️ Конфигурационные константы
 
-| Константа | Значение | Расположение |
-|-----------|---------|--------------|
-| `MEMORY_MAX_MESSAGES` | 4 | `config.py` — макс. сообщений в сессии |
-| `MEMORY_SESSION_TTL` | 600 сек (10 мин) | `config.py` — время жизни сессии |
-| `OLLAMA_TIMEOUT` | 180 сек | `config.py` — таймаут генерации LLM |
-| `RATE_LIMIT` | 3.0 сек | `bot/handlers.py` — кулдаун на пользователя |
-| `MAX_CONCURRENT_GENERATIONS` | 1 | `bot/handlers.py` — семафор генерации |
-| `distance_threshold` | 0.9 | `rag/retriever.py` — макс. косинусная дистанция для чанков |
-| `chunk_size` / `chunk_overlap` | 800 / 150 | `rag/loader.py` — параметры разбивки текста |
-| `temperature` | 0.5 | `rag/chain.py` — температура сэмплирования LLM |
-| `num_predict` | 512 | `rag/chain.py` — макс. генерируемых токенов |
+| Константа | Значение | Расположение | Описание |
+|-----------|---------|--------------|----------|
+| `MEMORY_MAX_MESSAGES` | 4 | `config.py` | Макс. число сообщений, удерживаемых в сессии |
+| `MEMORY_SESSION_TTL` | 600 сек (10 мин) | `config.py` | Таймаут бездействия для сброса диалога |
+| `OLLAMA_TIMEOUT` | 300 сек | `config.py` | Лимит времени ожидания ответа от Ollama |
+| `RATE_LIMIT` | 3.0 сек | `bot/handlers.py` | Кулдаун на отправку сообщений пользователем |
+| `distance_threshold` | 1.5 | `rag/retriever.py` | Порог отсечения для гибридной фильтрации чанков |
+| `chunk_size` / `chunk_overlap` | 800 / 150 | `rag/loader.py` | Размеры разделения текстовых чанков |
+| `temperature` | 0.5 | `rag/chain.py` | Температура генерации (креативность LLM) |
+| `num_predict` | 768 | `rag/chain.py` | Максимальный лимит выдачи токенов ответа |
+| `num_ctx` | 16384 | `rag/chain.py` | Выделенный размер контекстного окна LLM |
 
 ---
 

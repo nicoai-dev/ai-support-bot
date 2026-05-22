@@ -1,10 +1,133 @@
 services:
   bot:
     build: .
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
     volumes:
-      - ./data/knowledge_base:/app/data/knowledge_base
-      - ./data/db:/app/data/db
-    env_file:
-      - .env
+      - ./data/knowledge_base:/app/data/knowledge_base:ro
+      - ./data/chroma_db:/app/data/chroma_db
+      - bot_logs:/app/logs
+      - hf_cache:/root/.cache/huggingface
+    env_file: .env
+    environment:
+      STORAGE_BACKEND: postgres
+      DATABASE_URL: postgresql://bot:${POSTGRES_PASSWORD}@postgres:5432/nicomarket
+      REDIS_URL: redis://redis:6379/0
+      OLLAMA_BASE_URL: http://host.docker.internal:11434
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     restart: always
-    network_mode: "host" # Позволяет боту видеть Ollama, запущенную локально на Windows (через localhost)
+    healthcheck:
+      test: ["CMD", "python", "-c", "import sys; sys.exit(0)"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    networks:
+      - internal
+
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: bot
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: nicomarket
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U bot -d nicomarket"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - internal
+
+  redis:
+    image: redis:7-alpine
+    command: redis-server --maxmemory 128mb --maxmemory-policy allkeys-lru
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - internal
+
+  arq-worker:
+    build: .
+    command: arq workers.llm_worker.WorkerSettings
+    depends_on:
+      redis:
+        condition: service_healthy
+    volumes:
+      - ./data/knowledge_base:/app/data/knowledge_base:ro
+      - ./data/chroma_db:/app/data/chroma_db
+      - hf_cache:/root/.cache/huggingface
+    env_file: .env
+    environment:
+      OLLAMA_BASE_URL: http://host.docker.internal:11434
+      REDIS_URL: redis://redis:6379/0
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    deploy:
+      replicas: 1
+      resources:
+        limits:
+          memory: 2G
+    restart: always
+    networks:
+      - internal
+
+  # --- WEBAPP ---
+  nginx:
+    image: nginx:1.27-alpine
+    volumes:
+      - ./webapp:/usr/share/nginx/html:ro
+      - ./nginx/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+    networks:
+      - internal
+    restart: always
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1/"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+
+  tunnel:
+    image: alpine:3.20
+    # Устанавливаем openssh-client и redis-cli при старте
+    entrypoint: >
+      sh -c "
+        apk add --no-cache openssh-client redis &&
+        sh /scripts/start_tunnel.sh
+      "
+    volumes:
+      - ./scripts:/scripts:ro
+    environment:
+      NGINX_HOST: nginx
+      NGINX_PORT: 80
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+    depends_on:
+      nginx:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - internal
+    restart: always
+
+volumes:
+  pg_data:
+  redis_data:
+  bot_logs:
+  hf_cache:
+
+networks:
+  internal:
+    driver: bridge
+

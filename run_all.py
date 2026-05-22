@@ -6,6 +6,8 @@ import subprocess
 import threading
 import http.server
 import socketserver
+import urllib.request
+import urllib.error
 
 # Настройка кодировки для Windows консоли
 if sys.platform == "win32":
@@ -33,6 +35,31 @@ def kill_port_8000():
         # Порт свободен или команда не нашла совпадений
         pass
 
+def kill_orphaned_bots():
+    """Принудительное завершение зависших процессов бота и туннеля."""
+    try:
+        if sys.platform == "win32":
+            # Убиваем зависшие main.py
+            ps_cmd = 'Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -match "main.py" } | Select-Object -ExpandProperty ProcessId'
+            output = subprocess.check_output(["powershell", "-NoProfile", "-Command", ps_cmd], text=True)
+            for line in output.split('\n'):
+                pid = line.strip()
+                if pid.isdigit() and int(pid) != os.getpid():
+                    print(f"[INFO] Убиваем зависший процесс бота (PID {pid})...")
+                    subprocess.run(f"taskkill /F /PID {pid}", shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            
+            # Убиваем зависшие ssh.exe (localhost.run)
+            ps_cmd_ssh = 'Get-CimInstance Win32_Process | Where-Object { $_.Name -eq "ssh.exe" -and $_.CommandLine -match "localhost.run" } | Select-Object -ExpandProperty ProcessId'
+            output_ssh = subprocess.check_output(["powershell", "-NoProfile", "-Command", ps_cmd_ssh], text=True)
+            for line in output_ssh.split('\n'):
+                pid = line.strip()
+                if pid.isdigit():
+                    print(f"[INFO] Убиваем зависший SSH-туннель (PID {pid})...")
+                    subprocess.run(f"taskkill /F /PID {pid}", shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            time.sleep(0.5)
+    except Exception:
+        pass
+
 def start_http_server():
     """Запуск фонового веб-сервера для WebApp на 127.0.0.1:8000."""
     class QuietHandler(http.server.SimpleHTTPRequestHandler):
@@ -58,11 +85,20 @@ def start_http_server():
     print("[INFO] Локальный сервер WebApp успешно запущен на 127.0.0.1:8000.")
 
 def start_ssh_tunnel():
-    """Запуск SSH-туннеля к localhost.run с перенаправлением на 127.0.0.1:8000."""
+    """Запуск SSH-туннеля к localhost.run с перенаправлением на 127.0.0.1:8000.
+    Использует keep-alive для быстрого обнаружения разрыва соединения."""
     print("[INFO] Подключение к туннелю localhost.run...")
-    # Явно указываем 127.0.0.1 вместо localhost для избежания проблем с IPv6 на Windows
+    # Keep-alive каждые 15 сек, макс 3 промаха = разрыв через ~45 сек простоя
     proc = subprocess.Popen(
-        ["ssh", "-o", "StrictHostKeyChecking=no", "-R", "80:127.0.0.1:8000", "nokey@localhost.run"],
+        [
+            "ssh",
+            "-o", "StrictHostKeyChecking=no",
+            "-o", "ServerAliveInterval=15",
+            "-o", "ServerAliveCountMax=3",
+            "-o", "ExitOnForwardFailure=yes",
+            "-R", "80:127.0.0.1:8000",
+            "nokey@localhost.run"
+        ],
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,
@@ -70,12 +106,34 @@ def start_ssh_tunnel():
         encoding="utf-8"
     )
 
+    ignore_phrases = [
+        "authenticated as anonymous user", "tls termination", "create an account",
+        "Open your tunnel address", "Welcome to localhost.run", "favourite reverse tunnel",
+        "manage custom domains", "More details on custom domains", "permission denied error",
+        "free tunnel without a key", "explore using localhost.run", "your connection id is",
+        "https://localhost.run/docs", "domain) at https://", "█", "▄", "▀", "═"
+    ]
+
+    ansi_escape = re.compile(r'\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])')
+
+    def should_print(text):
+        if not text: return False
+        clean = ansi_escape.sub('', text)
+        if any(p in clean for p in ignore_phrases): return False
+        # Игнорируем строки, состоящие только из спецсимволов рамки и пробелов
+        if set(clean).issubset(set(" \t\r\n█▄▀═░▒▓■≡")): return False
+        return True
+
     url = None
     start_time = time.time()
-    while time.time() - start_time < 15:
+    while time.time() - start_time < 20:
         line = proc.stdout.readline()
         if not line:
             break
+        line_clean = line.strip()
+        if should_print(line_clean):
+            print(f"[TUNNEL] {line_clean}")
+            
         match = re.search(r"https://[a-zA-Z0-9-.]+\.lhr\.life", line)
         if match:
             url = match.group(0)
@@ -85,6 +143,20 @@ def start_ssh_tunnel():
         stderr_output = proc.stderr.read() if proc.poll() is not None else ""
         proc.terminate()
         raise Exception(f"Не удалось получить URL от localhost.run. {stderr_output}")
+
+    # Запускаем потоки для постоянного чтения stdout и stderr,
+    # чтобы процесс ssh не зависал из-за переполнения буфера (pipe) и выводил логи
+    def stream_logs(pipe, prefix):
+        try:
+            for log_line in pipe:
+                log_clean = log_line.strip()
+                if should_print(log_clean):
+                    print(f"{prefix} {log_clean}")
+        except Exception:
+            pass
+
+    threading.Thread(target=stream_logs, args=(proc.stdout, "[TUNNEL]"), daemon=True).start()
+    threading.Thread(target=stream_logs, args=(proc.stderr, "[TUNNEL]"), daemon=True).start()
         
     return url, proc
 
@@ -118,41 +190,143 @@ def update_env_file(url):
 def main():
     tunnel_proc = None
     bot_proc = None
-    try:
-        # 0. Очищаем порт 8000 от зависших серверов
-        kill_port_8000()
-        
-        # 1. Запуск веб-сервера
-        start_http_server()
-        
-        # 2. Запуск туннеля
-        url, tunnel_proc = start_ssh_tunnel()
-        
-        # 3. Обновление .env файла
-        update_env_file(url)
-        
-        # 4. Отображение красивого баннера
-        print("\n" + "="*60)
-        print(" 🛍️  NICO MARKET WEBAPP ГОТОВ К РАБОТЕ!")
-        print(f" 🔗  Динамический адрес каталога: {url}")
-        print("="*60 + "\n")
-        
-        # 5. Запуск бота в текущем процессе
+    worker_proc = None
+    tunnel_url = None
+    running = True
+
+    def restart_bot():
+        """(Пере)запуск бота в отдельном процессе."""
+        nonlocal bot_proc
+        if bot_proc and bot_proc.poll() is None:
+            try:
+                bot_proc.terminate()
+                bot_proc.wait(timeout=3)
+            except Exception:
+                try:
+                    bot_proc.kill()
+                except Exception:
+                    pass
+
         print("[INFO] Запуск Telegram-бота...")
         bot_proc = subprocess.Popen(
             [sys.executable, "main.py"],
             cwd=os.path.dirname(os.path.abspath(__file__))
         )
+
+    def restart_worker():
+        """(Пере)запуск ARQ-воркера в отдельном процессе."""
+        nonlocal worker_proc
+        if worker_proc and worker_proc.poll() is None:
+            try:
+                worker_proc.terminate()
+                worker_proc.wait(timeout=3)
+            except Exception:
+                try:
+                    worker_proc.kill()
+                except Exception:
+                    pass
+
+        print("[INFO] Запуск ARQ-воркера...")
+        worker_proc = subprocess.Popen(
+            [sys.executable, "-m", "arq", "workers.llm_worker.WorkerSettings"],
+            cwd=os.path.dirname(os.path.abspath(__file__))
+        )
+
+    def reconnect_tunnel():
+        """Переподключение SSH-туннеля и обновление .env."""
+        nonlocal tunnel_proc, tunnel_url
+        max_retries = 5
+        for attempt in range(1, max_retries + 1):
+            try:
+                print(f"\n[TUNNEL] Попытка подключения #{attempt}...")
+                new_url, new_proc = start_ssh_tunnel()
+                tunnel_url = new_url
+                tunnel_proc = new_proc
+                update_env_file(tunnel_url)
+                print(f"[TUNNEL] ✅ Туннель восстановлен: {tunnel_url}")
+                return True
+            except Exception as e:
+                print(f"[TUNNEL] ❌ Попытка #{attempt} не удалась: {e}")
+                wait_time = min(5 * attempt, 30)
+                print(f"[TUNNEL] Повторная попытка через {wait_time} сек...")
+                time.sleep(wait_time)
+        print("[TUNNEL] 🔴 Не удалось восстановить туннель после всех попыток!")
+        return False
+
+    try:
+        # 0. Очищаем старые процессы, чтобы не было конфликта токена
+        kill_port_8000()
+        kill_orphaned_bots()
         
-        # Периодически просыпаемся, чтобы Python мог обрабатывать Ctrl+C
-        while bot_proc.poll() is None:
-            time.sleep(0.5)
+        # 1. Запуск веб-сервера
+        start_http_server()
+        
+        # 2. Запуск туннеля
+        tunnel_url, tunnel_proc = start_ssh_tunnel()
+        
+        # 3. Обновление .env файла
+        update_env_file(tunnel_url)
+        
+        # 4. Отображение красивого баннера
+        print("\n" + "="*60)
+        print(" 🛍️  NICO MARKET WEBAPP ГОТОВ К РАБОТЕ!")
+        print(f" 🔗  Динамический адрес каталога: {tunnel_url}")
+        print("="*60 + "\n")
+        
+        # 5. Запуск бота и ARQ-воркера
+        restart_bot()
+        restart_worker()
+        
+        # 6. Основной цикл с мониторингом туннеля
+        while running:
+            time.sleep(5)
+
+            # Проверка бота
+            if bot_proc and bot_proc.poll() is not None:
+                print("[WARN] Бот-процесс упал. Перезапуск...")
+                restart_bot()
+
+            # Проверка воркера
+            if worker_proc and worker_proc.poll() is not None:
+                print("[WARN] ARQ-воркер упал. Перезапуск...")
+                restart_worker()
+
+            # Проверка туннеля (упал ли сам процесс)
+            if tunnel_proc and tunnel_proc.poll() is not None:
+                exit_code = tunnel_proc.returncode
+                print(f"\n[TUNNEL] ⚠️  SSH-туннель упал (exit code: {exit_code}). Переподключение...")
+                if reconnect_tunnel():
+                    # Перезапускаем бота, чтобы подхватил новый WEBAPP_URL
+                    restart_bot()
+                else:
+                    print("[FATAL] Невозможно восстановить туннель. Завершение.")
+                    break
+            
+            # Активный пинг туннеля, т.к. SSH может висеть, даже если сервер обрубил порт
+            elif tunnel_url:
+                try:
+                    req = urllib.request.Request(tunnel_url, headers={'User-Agent': 'Mozilla/5.0'})
+                    with urllib.request.urlopen(req, timeout=5) as response:
+                        html = response.read().decode('utf-8', errors='ignore')
+                        if "no tunnel here" in html.lower() or "tunnel not found" in html.lower():
+                            print("\n[TUNNEL] ⚠️ Обнаружена страница ошибки (Туннель закрыт сервером!). Принудительный реконнект...")
+                            if tunnel_proc:
+                                tunnel_proc.kill()
+                except urllib.error.HTTPError as e:
+                    if e.code in (404, 502, 503, 504):
+                        print(f"\n[TUNNEL] ⚠️ Туннель вернул ошибку HTTP {e.code}. Принудительный реконнект...")
+                        if tunnel_proc:
+                            tunnel_proc.kill()
+                except Exception:
+                    # Игнорируем обычные сетевые ошибки (например timeout), чтобы не спамить реконнектами
+                    pass
         
     except KeyboardInterrupt:
         print("\n[INFO] Получен сигнал остановки (Ctrl+C). Завершение процессов...")
     except Exception as e:
         print(f"\n[КРИТИЧЕСКАЯ ОШИБКА] {e}")
     finally:
+        running = False
         # Корректно завершаем процесс бота
         if bot_proc:
             try:
@@ -163,6 +337,19 @@ def main():
                 try:
                     bot_proc.kill()
                     print("[INFO] Telegram-бот принудительно завершен.")
+                except Exception:
+                    pass
+
+        # Корректно завершаем ARQ-воркер
+        if worker_proc:
+            try:
+                worker_proc.terminate()
+                worker_proc.wait(timeout=2)
+                print("[INFO] ARQ-воркер успешно остановлен.")
+            except Exception:
+                try:
+                    worker_proc.kill()
+                    print("[INFO] ARQ-воркер принудительно завершен.")
                 except Exception:
                     pass
 
@@ -181,3 +368,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+

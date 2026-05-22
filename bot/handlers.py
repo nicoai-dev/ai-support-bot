@@ -8,20 +8,37 @@ from aiogram.types import ReplyKeyboardMarkup, KeyboardButton, WebAppInfo
 import config
 from rag.retriever import search
 from rag.chain import generate_answer_stream
-from bot.memory import memory
+import bot.memory
 
 router = Router()
+
+from arq import create_pool
+from arq.connections import RedisSettings
 
 RATE_LIMIT = 3.0  # Секунды между сообщениями
 MAX_CONCURRENT_GENERATIONS = 1
 generation_semaphore = asyncio.Semaphore(MAX_CONCURRENT_GENERATIONS)
 
+arq_pool = None
 
-def get_reply_keyboard(user_id: int = 0, first_name: str = "Гость", photo_url: str = ""):
+
+async def get_reply_keyboard(user_id: int = 0, first_name: str = "Гость", photo_url: str = ""):
     from urllib.parse import quote
     encoded_name = quote(first_name or "Гость")
     encoded_photo = quote(photo_url or "")
-    url = f"{config.WEBAPP_URL}?user_id={user_id}&first_name={encoded_name}&photo_url={encoded_photo}"
+
+    # Читаем актуальный URL туннеля из Redis (пишет tunnel-контейнер).
+    # Fallback — значение из .env (config.WEBAPP_URL).
+    webapp_url = config.WEBAPP_URL
+    try:
+        from bot.cache import redis_cache
+        tunnel_url = await redis_cache.get("webapp:tunnel_url")
+        if tunnel_url:
+            webapp_url = tunnel_url
+    except Exception:
+        pass  # Redis недоступен — берём из конфига
+
+    url = f"{webapp_url}?user_id={user_id}&first_name={encoded_name}&photo_url={encoded_photo}"
     return ReplyKeyboardMarkup(
         keyboard=[
             [KeyboardButton(text="🛒 Каталог Nico Market", web_app=WebAppInfo(url=url))]
@@ -30,13 +47,22 @@ def get_reply_keyboard(user_id: int = 0, first_name: str = "Гость", photo_u
     )
 
 
+from bot.cache import redis_cache
+
 async def get_user_photo_url(message: types.Message) -> str:
+    cache_key = f"avatar:{message.from_user.id}"
+    cached = await redis_cache.get(cache_key)
+    if cached:
+        return cached
+
     try:
         photos = await message.bot.get_user_profile_photos(user_id=message.from_user.id, limit=1)
         if photos.total_count > 0:
             file_id = photos.photos[0][-1].file_id
             file_info = await message.bot.get_file(file_id)
-            return f"https://api.telegram.org/file/bot{config.BOT_TOKEN}/{file_info.file_path}"
+            url = f"https://api.telegram.org/file/bot{config.BOT_TOKEN}/{file_info.file_path}"
+            await redis_cache.set(cache_key, url, ttl=3600)
+            return url
     except Exception as e:
         logging.error(f"Error fetching user profile photo: {e}")
     return ""
@@ -55,12 +81,13 @@ async def cmd_start(message: types.Message):
     photo_url = await get_user_photo_url(message)
     await message.answer(
         "👋 Добро пожаловать в Nico Market!\n\n"
-        "Я ваш виртуальный помощник. Задайте мне любой вопрос о наших товарах или правилах магазина.\n\n"
-        "Чем я могу вам помочь сегодня?",
-        reply_markup=get_reply_keyboard(message.from_user.id, message.from_user.first_name, photo_url)
+        "Я — Нико, цифровой консьерж и первый AI-сотрудник компании. "
+        "К Вашим услугам: консультации по ассортименту, помощь с заказами и навигация по правилам магазина.\n\n"
+        "Чем могу быть полезен?",
+        reply_markup=await get_reply_keyboard(message.from_user.id, message.from_user.first_name, photo_url)
     )
     await message.answer(
-        "💡 Для быстрого доступа используйте кнопки ниже или меню:",
+        "💡 Для быстрого доступа воспользуйтесь панелью ниже:",
         reply_markup=get_main_keyboard()
     )
 
@@ -68,11 +95,11 @@ async def cmd_start(message: types.Message):
 @router.message(Command("help"))
 async def cmd_help(message: types.Message):
     await message.answer(
-        "💡 **Как пользоваться ботом:**\n\n"
-        "1. Просто напишите ваш вопрос текстом.\n"
-        "2. Я помню контекст диалога (например, если вы уточняете детали предыдущего вопроса).\n"
-        "3. Если хотите начать новую тему, используйте /new.\n\n"
-        "Или выберите нужный раздел ниже:",
+        "💡 **Краткое руководство:**\n\n"
+        "1. Задайте вопрос текстом — я обработаю его в приоритетном порядке.\n"
+        "2. Я сохраняю контекст беседы и учитываю предыдущие уточнения.\n"
+        "3. Команда /new — начать диалог с чистого листа.\n\n"
+        "Или воспользуйтесь быстрым меню:",
         reply_markup=get_main_keyboard(),
         parse_mode="Markdown"
     )
@@ -80,24 +107,24 @@ async def cmd_help(message: types.Message):
 
 @router.message(Command("new"))
 async def cmd_new(message: types.Message):
-    memory.clear(message.from_user.id)
+    await bot.memory.memory.clear(message.from_user.id)
     photo_url = await get_user_photo_url(message)
-    await message.answer("🔄 Контекст диалога сброшен. Начнем сначала!", reply_markup=get_reply_keyboard(message.from_user.id, message.from_user.first_name, photo_url))
+    await message.answer("🔄 Контекст диалога обнулён. Я готов к новому запросу — слушаю Вас.", reply_markup=await get_reply_keyboard(message.from_user.id, message.from_user.first_name, photo_url))
 
 
 @router.callback_query()
 async def handle_callbacks(callback: types.CallbackQuery):
     if callback.data == "order_status":
-        await callback.message.answer("🔎 Чтобы узнать статус заказа, пожалуйста, напишите его номер (например: Заказ #12345).")
+        await callback.message.answer("🔎 Для проверки статуса, пожалуйста, укажите номер заказа (например: #12345).")
     elif callback.data == "return_policy":
-        await callback.message.answer("🔄 У нас действует возврат в течение 14 дней при сохранности товарного вида. Что именно вы хотите вернуть?")
+        await callback.message.answer("🔄 Стандартный срок возврата составляет 14 дней при сохранении товарного вида. Какой товар Вы хотели бы вернуть?")
     elif callback.data == "contact_manager":
         await callback.message.answer(
             "📞 **Служба поддержки Nico Market**\n\n"
-            "Наш менеджер готов помочь вам по любым вопросам:\n"
-            "• **Телефон:** `+679 764-2658` *(нажмите для копирования)*\n"
-            "• **Режим работы:** Ежедневно с 08:00 до 22:00 (FJT / UTC+12)\n\n"
-            "Вы можете позвонить нам напрямую или продолжить общение со мной здесь!",
+            "Живой специалист на связи ежедневно:\n"
+            "• **Телефон:** `+679 764-2658`\n"
+            "• **Часы работы:** 08:00–22:00 (FJT / UTC+12)\n\n"
+            "Вы также можете продолжить диалог со мной — я к Вашим услугам.",
             parse_mode="Markdown"
         )
     await callback.answer()
@@ -115,29 +142,29 @@ async def handle_web_app_data(message: types.Message):
         
         photo_url = await get_user_photo_url(message)
         if not items:
-            await message.answer("🛒 Ваша корзина пуста!", reply_markup=get_reply_keyboard(message.from_user.id, message.from_user.first_name, photo_url))
+            await message.answer("🛒 Корзина пуста. Воспользуйтесь каталогом, чтобы выбрать интересующие позиции.", reply_markup=await get_reply_keyboard(message.from_user.id, message.from_user.first_name, photo_url))
             return
             
-        receipt = "🛒 **Ваш заказ успешно принят!**\n\n"
+        receipt = "🛒 **Заказ оформлен**\n\n"
         for item_id, item in items.items():
             receipt += f"• {item['title']} — {item['count']} шт. (${item['price']} / шт.)\n"
             
         receipt += f"\n💵 **Итого к оплате: ${total}**\n\n"
         receipt += (
-            "Спасибо за покупку в Nico Market! Наш менеджер свяжется с вами в ближайшее время для подтверждения доставки.\n\n"
+            "Благодарим за выбор Nico Market! Менеджер свяжется с Вами для подтверждения и уточнения деталей доставки.\n\n"
             "📞 +679 764-2658 (08:00–22:00)\n"
             "📧 support@nicomarket.fj"
         )
         
-        await message.answer(receipt, parse_mode="Markdown", reply_markup=get_reply_keyboard(message.from_user.id, message.from_user.first_name, photo_url))
+        await message.answer(receipt, parse_mode="Markdown", reply_markup=await get_reply_keyboard(message.from_user.id, message.from_user.first_name, photo_url))
         
         # Сохраняем информацию о заказе в историю диалога (контекст ИИ)
         user_msg = "Оформил заказ в каталоге: " + ", ".join([f"{item['title']} ({item['count']} шт.)" for item in items.values()]) + f" на сумму ${total}"
-        memory.add_message(message.from_user.id, "user", user_msg)
-        memory.add_message(message.from_user.id, "assistant", receipt)
+        await bot.memory.memory.add_message(message.from_user.id, "user", user_msg)
+        await bot.memory.memory.add_message(message.from_user.id, "assistant", receipt)
     except Exception as e:
         logging.error(f"Ошибка парсинга данных MiniApp: {e}")
-        await message.answer("⚠️ Произошла ошибка при обработке вашего заказа. Пожалуйста, попробуйте снова.", reply_markup=get_reply_keyboard(message.from_user.id, message.from_user.first_name, photo_url))
+        await message.answer("⚠️ При обработке заказа произошёл сбой. Пожалуйста, повторите попытку или обратитесь к менеджеру: +679 764-2658.", reply_markup=await get_reply_keyboard(message.from_user.id, message.from_user.first_name, photo_url))
 
 
 @router.message()
@@ -146,69 +173,81 @@ async def handle_message(message: types.Message):
     photo_url = await get_user_photo_url(message)
     
     # Rate limiting через объект memory
-    if not memory.check_rate_limit(user_id, RATE_LIMIT):
-        await message.answer("⚠️ Вы отправляете сообщения слишком часто. Пожалуйста, подождите пару секунд.", reply_markup=get_reply_keyboard(message.from_user.id, message.from_user.first_name, photo_url))
+    if not await bot.memory.memory.check_rate_limit(user_id, RATE_LIMIT):
+        await message.answer("⏳ Я обрабатываю Ваш предыдущий запрос. Пожалуйста, подождите несколько секунд.", reply_markup=await get_reply_keyboard(message.from_user.id, message.from_user.first_name, photo_url))
         return
 
     # Обработка нетекстовых сообщений
     if not message.text:
-        await message.answer("Я пока работаю только с текстом. Пожалуйста, напишите ваш вопрос.", reply_markup=get_reply_keyboard(message.from_user.id, message.from_user.first_name, photo_url))
+        await message.answer("На данный момент я воспринимаю только текстовые сообщения. Пожалуйста, сформулируйте Ваш вопрос текстом.", reply_markup=await get_reply_keyboard(message.from_user.id, message.from_user.first_name, photo_url))
         return
 
     # Проверка длины сообщения
     if len(message.text) > 1000:
-        await message.answer("Ваше сообщение слишком длинное. Пожалуйста, сократите его до 1000 символов.", reply_markup=get_reply_keyboard(message.from_user.id, message.from_user.first_name, photo_url))
+        await message.answer("Сообщение превышает допустимый объём. Пожалуйста, сократите запрос до 1 000 символов — это поможет мне дать точный ответ.", reply_markup=await get_reply_keyboard(message.from_user.id, message.from_user.first_name, photo_url))
         return
 
     # Показываем статус "печатает"
     await message.bot.send_chat_action(chat_id=message.chat.id, action="typing")
     
-    processing_msg = await message.answer("🔄 Обрабатываю ваш запрос...")
+    processing_msg = await message.answer("🔄 Анализирую запрос...")
 
     try:
-        chat_history = memory.get_history(user_id)
+        chat_history = await bot.memory.memory.get_history(user_id)
         
-        # 1. Поиск релевантных чанков
-        chunks = await search(message.text, top_k=8, distance_threshold=0.9)
-        
-        # ЛОГ ДЛЯ ОТЛАДКИ (увидишь в консоли, что нашел бот)
-        if chunks:
-            logging.info(f"🔎 Найдено чанков: {len(chunks)}")
-            for i, c in enumerate(chunks):
-                logging.info(f"Чанк {i+1}: {c['text'][:50]}...")
-        else:
-            logging.warning("⚠️ Ничего не найдено в базе знаний! Использую fallback.")
-            fallback_answer = (
-                "К сожалению, у меня нет точной информации по этому вопросу в текущей базе знаний. "
-                "Давайте я соединю вас с менеджером — он точно во всём разберётся!\n\n"
-                "📞 +679 764-2658 (08:00–22:00)\n"
-                "📧 support@nicomarket.fj"
+        # 2. Вызов ARQ Worker для генерации
+        if arq_pool:
+            history_dicts = [{"role": msg.role, "text": msg.text} for msg in chat_history]
+            job = await arq_pool.enqueue_job(
+                "process_question",
+                user_id=user_id,
+                question=message.text,
+                chat_history=history_dicts,
             )
-            await processing_msg.edit_text(fallback_answer)
-            memory.add_message(user_id, "user", message.text)
-            memory.add_message(user_id, "assistant", fallback_answer)
-            return
-
-        # 2. Потоковая генерация ответа
-        full_answer = ""
-        last_edit_time = time.time()
-        
-        async with generation_semaphore:
-            async for partial_answer in generate_answer_stream(message.text, chunks, chat_history):
-                if not partial_answer:
-                    continue
-                    
-                full_answer = partial_answer
-                # Обновляем каждые 1.5 сек для безопасности (лимиты Telegram)
-                now = time.time()
-                if now - last_edit_time > 1.5:
-                    try:
-                        await processing_msg.edit_text(partial_answer + " ▌")
-                        last_edit_time = now
-                    except Exception as edit_error:
-                        # Если поймали флуд или другую ошибку редактирования — просто пропускаем шаг
-                        logging.debug(f"Пропуск обновления стриминга: {edit_error}")
-                        pass
+            result = await job.result(timeout=120)
+            if result:
+                full_answer = result["answer"]
+            else:
+                full_answer = ""
+        else:
+            # Fallback на локальную обработку если ARQ не настроен
+            search_query = message.text
+            if chat_history:
+                # Добавляем последние реплики пользователя для сохранения контекста поиска
+                context_queries = [msg.text for msg in chat_history[-4:] if msg.role == "user"]
+                context_queries.append(message.text)
+                search_query = " ".join(context_queries)
+                
+            chunks = await search(search_query, top_k=8, distance_threshold=1.5)
+            if not chunks:
+                logging.warning("⚠️ Ничего не найдено в базе знаний! Использую fallback.")
+                fallback_answer = (
+                    "К сожалению, данный вопрос выходит за пределы имеющейся у меня информации. "
+                    "Рекомендую обратиться к менеджеру — он сможет предоставить исчерпывающую консультацию.\n\n"
+                    "📞 +679 764-2658 (08:00–22:00)\n"
+                    "📧 support@nicomarket.fj"
+                )
+                await processing_msg.edit_text(fallback_answer)
+                await bot.memory.memory.add_message(user_id, "user", message.text)
+                await bot.memory.memory.add_message(user_id, "assistant", fallback_answer)
+                return
+                
+            # Потоковая генерация ответа
+            full_answer = ""
+            last_edit_time = time.time()
+            async with generation_semaphore:
+                async for partial_answer in generate_answer_stream(message.text, chunks, chat_history):
+                    if not partial_answer:
+                        continue
+                        
+                    full_answer = partial_answer
+                    now = time.time()
+                    if now - last_edit_time > 1.5:
+                        try:
+                            await processing_msg.edit_text(partial_answer + " ▌")
+                            last_edit_time = now
+                        except Exception as edit_error:
+                            logging.debug(f"Пропуск обновления стриминга: {edit_error}")
 
         from rag.guardrails import validate_response
 
@@ -218,11 +257,10 @@ async def handle_message(message: types.Message):
             
             if warnings:
                 logging.warning(f"⚠️ Guardrails сработали для user {user_id}: {warnings}")
-                # Если слишком много подозрений — подменяем на безопасный ответ
                 if len(warnings) >= 3:
                     validated_answer = (
-                        "Прошу прощения, я не уверен в точности своего ответа на этот вопрос. "
-                        "Чтобы не ввести вас в заблуждение, лучше уточните это у нашего менеджера.\n\n"
+                        "Прошу прощения — в данном случае я не могу гарантировать полную точность ответа. "
+                        "Чтобы Вы получили достоверную информацию, рекомендую связаться с менеджером.\n\n"
                         "📞 +679 764-2658\n📧 support@nicomarket.fj"
                     )
             
@@ -232,21 +270,20 @@ async def handle_message(message: types.Message):
             logging.info(
                 f"📊 AUDIT | user={user_id} | "
                 f"query='{message.text[:80]}' | "
-                f"chunks_found={len(chunks)} | "
                 f"guardrail_warnings={len(warnings)} | "
                 f"answer_len={len(validated_answer)}"
             )
             
             # Сохраняем диалог в память
-            memory.add_message(user_id, "user", message.text)
-            memory.add_message(user_id, "assistant", validated_answer)
+            await bot.memory.memory.add_message(user_id, "user", message.text)
+            await bot.memory.memory.add_message(user_id, "assistant", validated_answer)
         else:
             await processing_msg.edit_text(
-                "К сожалению, не удалось сформировать ответ. Попробуйте переформулировать вопрос или обратитесь к менеджеру по телефону +679 764-2658."
+                "К сожалению, мне не удалось сформировать корректный ответ. Попробуйте переформулировать запрос или свяжитесь с менеджером: +679 764-2658."
             )
 
     except Exception as e:
         logging.error(f"Ошибка при обработке сообщения: {e}")
         await processing_msg.edit_text(
-            "⚠️ Произошла ошибка. Пожалуйста, попробуйте позже или свяжитесь с поддержкой Nico Market."
+            "⚠️ Произошёл технический сбой. Пожалуйста, повторите запрос чуть позже. Если ситуация повторится — свяжитесь с поддержкой: +679 764-2658."
         )

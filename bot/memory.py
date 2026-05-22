@@ -1,20 +1,15 @@
 import time
 from dataclasses import dataclass, field
 from config import MEMORY_MAX_MESSAGES, MEMORY_SESSION_TTL
-
-@dataclass
-class Message:
-    role: str         # "user" или "assistant"
-    text: str
-    timestamp: float
+from bot.storage import StorageBackend, MessageRecord
 
 @dataclass
 class Session:
-    messages: list[Message] = field(default_factory=list)
+    messages: list[MessageRecord] = field(default_factory=list)
     last_active: float = 0.0
 
-class ConversationMemory:
-    """Хранит историю диалогов и таймауты пользователей с автоочисткой."""
+class MemoryStorage(StorageBackend):
+    """Хранит историю диалогов и таймауты пользователей с автоочисткой (in-memory)."""
     
     def __init__(self, max_messages: int = MEMORY_MAX_MESSAGES, session_ttl: int = MEMORY_SESSION_TTL):
         self._sessions: dict[int, Session] = {}
@@ -22,47 +17,51 @@ class ConversationMemory:
         self.max_messages = max_messages
         self.session_ttl = session_ttl
     
-    def add_message(self, user_id: int, role: str, text: str):
+    async def add_message(self, user_id: int, role: str, text: str) -> None:
         """Добавить сообщение в историю."""
         now = time.time()
         session = self._get_or_create(user_id, now)
-        session.messages.append(Message(role=role, text=text, timestamp=now))
+        session.messages.append(MessageRecord(user_id=user_id, role=role, text=text, timestamp=now))
         session.last_active = now
         
         if len(session.messages) > self.max_messages:
             session.messages = session.messages[-self.max_messages:]
     
-    def get_history(self, user_id: int) -> list[Message]:
+    async def get_history(self, user_id: int, limit: int = None) -> list[MessageRecord]:
         """Получить историю диалога."""
+        if limit is None:
+            limit = self.max_messages
         session = self._sessions.get(user_id)
         if not session:
             return []
         if time.time() - session.last_active > self.session_ttl:
             del self._sessions[user_id]
             return []
-        return session.messages
+        return session.messages[-limit:] if limit else session.messages
     
-    def check_rate_limit(self, user_id: int, rate_limit: float) -> bool:
+    async def check_rate_limit(self, user_id: int, interval: float) -> bool:
         """Проверить, не слишком ли часто пишет пользователь."""
         now = time.time()
         if user_id in self._user_timeouts:
-            if now - self._user_timeouts[user_id] < rate_limit:
+            if now - self._user_timeouts[user_id] < interval:
                 return False
         self._user_timeouts[user_id] = now
         return True
 
-    def clear(self, user_id: int):
+    async def clear(self, user_id: int) -> None:
         """Сбросить историю пользователя."""
         self._sessions.pop(user_id, None)
     
-    def cleanup_expired(self):
-        """Удалить истёкшие сессии и старые записи в таймаутах."""
+    async def cleanup_expired(self, ttl: int = None) -> int:
+        """Удалить истёкшие сессии и старые записи в таймаутах. Возвращает количество удаленных."""
+        if ttl is None:
+            ttl = self.session_ttl
         now = time.time()
         
         # Чистка истории
         expired_sessions = [
             uid for uid, s in self._sessions.items()
-            if now - s.last_active > self.session_ttl
+            if now - s.last_active > ttl
         ]
         for uid in expired_sessions:
             del self._sessions[uid]
@@ -74,6 +73,8 @@ class ConversationMemory:
         ]
         for uid in expired_timeouts:
             del self._user_timeouts[uid]
+            
+        return len(expired_sessions)
     
     def _get_or_create(self, user_id: int, now: float) -> Session:
         session = self._sessions.get(user_id)
@@ -83,6 +84,20 @@ class ConversationMemory:
             session = Session(last_active=now)
             self._sessions[user_id] = session
         return session
+from config import STORAGE_BACKEND, DATABASE_URL
 
-# Глобальный экземпляр
-memory = ConversationMemory()
+# Глобальный экземпляр для совместимости
+memory: StorageBackend
+
+if STORAGE_BACKEND == "postgres":
+    # Для postgres мы должны инициализировать пул асинхронно.
+    # Создадим временную in-memory реализацию, пока не вызовем init_postgres_memory
+    from bot.storage_postgres import PostgresStorage
+    memory = MemoryStorage()
+    
+    async def init_postgres_memory():
+        global memory
+        if STORAGE_BACKEND == "postgres":
+            memory = await PostgresStorage.create(DATABASE_URL)
+else:
+    memory = MemoryStorage()

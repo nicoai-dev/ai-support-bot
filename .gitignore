@@ -7,3 +7,7 @@ data/chroma_db/
 .vscode/
 assets/
 *.png
+*.db
+data/*.db
+logs/
+webapp/avatars/

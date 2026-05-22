@@ -7,10 +7,17 @@ tg.expand();
 // Сообщаем Telegram, что WebApp загружен
 tg.ready();
 
-// Настройка цветов под тему Telegram пользователя
-document.documentElement.style.setProperty('--bg-color', tg.backgroundColor || '#0f0c1b');
-document.documentElement.style.setProperty('--text-color', tg.themeParams.text_color || '#f3f4f6');
-document.documentElement.style.setProperty('--text-muted', tg.themeParams.hint_color || '#9ca3af');
+// Фиксируем цвета для темной темы, игнорируя системную тему Telegram
+document.documentElement.style.setProperty('--bg-color', '#0f0c1b');
+document.documentElement.style.setProperty('--text-color', '#f3f4f6');
+document.documentElement.style.setProperty('--text-muted', '#9ca3af');
+
+try {
+    tg.setHeaderColor('#0f0c1b');
+    tg.setBackgroundColor('#0f0c1b');
+} catch (e) {
+    console.error("Error setting Telegram colors:", e);
+}
 
 // UI элементы
 const greetingEl = document.getElementById('user-greeting');
@@ -366,17 +373,21 @@ searchClearBtn.addEventListener('click', () => {
 
 // Действие по кнопке «Оформить заказ»
 checkoutBtn.addEventListener('click', () => {
-    const orderData = {
-        items: cart,
-        total: Object.values(cart).reduce((sum, item) => sum + (item.price * item.count), 0),
-        timestamp: Date.now()
-    };
+    tg.showConfirm("Вы уверены, что хотите оформить заказ?", (agreed) => {
+        if (agreed) {
+            const orderData = {
+                items: cart,
+                total: Object.values(cart).reduce((sum, item) => sum + (item.price * item.count), 0),
+                timestamp: Date.now()
+            };
 
-    // Отправляем JSON-строку заказа обратно в бот
-    tg.sendData(JSON.stringify(orderData));
-    
-    // Закрываем Mini App
-    tg.close();
+            // Отправляем JSON-строку заказа обратно в бот
+            tg.sendData(JSON.stringify(orderData));
+            
+            // Закрываем Mini App
+            tg.close();
+        }
+    });
 });
 
 // --- ИНТЕГРАЦИЯ ДЕТАЛЬНОГО ОПИСАНИЯ ТОВАРОВ (МОДАЛ) ---

@@ -15,52 +15,39 @@ A production-ready AI support assistant for Telegram built on a **RAG (Retrieval
 
 ## ✨ Key Features
 
-### 🧠 RAG Pipeline
-- **Semantic search** via `SentenceTransformers` (`paraphrase-multilingual-MiniLM-L12-v2`) + `ChromaDB` with cosine distance and normalized embeddings.
-- **Chunking** via `langchain-text-splitters` with `RecursiveCharacterTextSplitter` (800 chars, 150 overlap) and smart separators (`===`, `---`, `\n\n`, etc.) to respect document structure.
-- **Context-aware search**: the bot analyzes conversation history for multi-turn follow-up questions, so the user doesn't have to repeat themselves.
-- **Distance-based filtering**: chunks with cosine distance > 0.9 are silently discarded, preventing low-relevance noise from reaching the LLM.
+### 🧠 Advanced Hybrid RAG Pipeline
+- **Hybrid Search**: Combines semantic Vector search (ChromaDB using `paraphrase-multilingual-MiniLM-L12-v2`) and Lexical search (custom high-performance `BM25Index`) for maximum precision and recall.
+- **RRF Fusion**: Integrates vector and lexical search lists using **Reciprocal Rank Fusion (RRF)**.
+- **Cross-Encoder Reranking**: Utilizes `cross-encoder/mmarco-mMiniLMv2-L12-H384-v1` to perform deep neural reranking of candidate chunks.
+- **Active Query Expansion**: LLM-driven query rewriting (`expand_query`) paraphrases user questions into 3 distinct variations to capture all semantic facets.
+- **Context-Aware Retrieval**: Dynamically reconstructs the search query using the last 4 conversational turns to resolve ambiguities in multi-turn dialogues.
+- **Distance Filtering**: Cosine distance filtering (threshold `1.5` for hybrid compatibility) keeps search results precise.
 
 ### 🛡️ Anti-Hallucination System (Multi-Layer)
-1. **System prompt**: 6 strict rules baked into the LLM prompt — grounding in context only, no fake products/URLs/contacts, natural tone, Russian-only responses, category-level answers for broad questions.
-2. **Programmatic guardrails** (`rag/guardrails.py`): regex-based post-processing that validates every response before delivery:
-   - Detects hallucinated phone numbers, emails, and URLs that don't match a whitelist.
-   - Catches prompt leakage markers ("according to the instructions", "in my database").
-   - If ≥ 3 warnings fire simultaneously, the entire response is replaced with a safe fallback redirecting the user to a human manager.
-3. **Graceful fallback**: if zero chunks pass the distance threshold, the bot skips the LLM entirely and returns a curated fallback answer with real support contacts.
+1. **System Prompt**: 6 strict constraints baked into the LLM context, including local-only grounding, Russian-only output, category-level grouping for general topics.
+2. **Programmatic Guardrails** (`rag/guardrails.py`): Real-time response post-validation filtering out hallucinated contact details or system instruction leaks.
+3. **Multi-level Fallbacks**: If guardrails trigger ≥ 3 violations, or retrieval returns zero valid chunks, the LLM is bypassed and a polite, verified fallback response is served.
 
-### ⚡ Streaming Responses
-- The bot uses Ollama's **streaming Chat API** — tokens appear in real-time inside the Telegram message.
-- Throttled message edits (every 1.5s) to stay within Telegram API rate limits, with silent error recovery on flood errors.
-- A semaphore (`MAX_CONCURRENT_GENERATIONS = 1`) serializes generation requests to prevent resource contention on limited hardware.
+### ⚡ Asynchronous Architecture & Task Queuing
+- **ARQ Task Offloading**: Heavy search and generation logic is offloaded to a Redis-backed **ARQ async worker process** (`workers/llm_worker.py`), keeping the bot's event loop completely non-blocking.
+- **Local Fallback**: Gracefully falls back to inline generation if Redis/ARQ is offline.
+- **Concurrency Control**: A semaphore serializes LLM calls to prevent resource thrashing on local host machines.
+
+### ⚕️ Enterprise Observability & Health
+- **Structured JSON Logging**: Custom `JSONFormatter` in `main.py` writes machine-readable logs to `logs/bot.jsonl` with automatic rotation.
+- **Healthcheck Microservice**: Built-in HTTP server (port `8080`, `/health` endpoint) exposes live status metrics for Ollama and storage connectivity.
 
 ### 🛒 Telegram Mini App (WebApp)
-- A fully responsive storefront embedded as a **Telegram Mini App** (WebApp).
-- Live product search, category tabs (Hardware, Software, Services), product detail modals with glassmorphism design.
-- Interactive shopping cart with quantity controls, real-time totals, and order checkout that sends structured data back to the bot.
-- User avatar and name are passed via URL params and displayed in the header.
-- Product catalog loaded from a local `products.json` (22K+ entries).
+- A highly polished storefront built using vanilla HTML/CSS/JS with modern glassmorphism styling.
+- Real-time catalog search over 22k+ mock records (`products.json`).
+- Live shopping cart, user session injection, and checkout callbacks sending structured transaction data to the bot.
 
 ### 🔄 Orchestrator (`run_all.py`)
-A single-script supervisor that manages the entire stack:
-1. **Kills orphaned processes** — cleans up stale bot instances and SSH tunnels from previous runs (Windows-specific via `Get-CimInstance`).
-2. **Starts an HTTP server** (port 8000) serving the WebApp from `webapp/`.
-3. **Establishes an SSH tunnel** to `localhost.run` with keep-alive (15s interval, 3 max misses).
-4. **Auto-updates `.env`** with the new tunnel URL so the bot always has the correct `WEBAPP_URL`.
-5. **Monitors both processes** in a loop:
-   - Auto-restarts the bot if it crashes.
-   - **Active tunnel health checking**: pings the tunnel URL and detects stale tunnels ("no tunnel here" pages, HTTP 502/503/504) — even if the SSH process itself is still alive.
-   - Reconnects with exponential backoff (up to 5 retries, max 30s delay).
-6. **Graceful shutdown** on `Ctrl+C` — terminates all child processes with timeouts.
-
-### 🏗️ Production Hardening
-- **Global `ErrorHandlingMiddleware`**: catches any unhandled exception in any handler and sends a polite apology to the user.
-- **Background memory cleanup**: a coroutine runs every 5 minutes, purging expired sessions (TTL: 10 min) and stale rate-limit records (>1 hour old).
-- **Rate limiting**: 3-second cooldown per user, enforced via the memory module.
-- **Message length validation**: rejects messages over 1000 chars.
-- **Windows `wakeup_loop`**: a 0.5s async sleep loop that keeps the event loop responsive to `Ctrl+C` on Windows (a known `asyncio` quirk).
-- **Singleton `aiohttp` session** with `asyncio.Lock` to prevent race conditions during concurrent access.
-- **Graceful shutdown sequence**: cancels background tasks → waits with timeout → closes aiohttp session → closes bot session.
+A comprehensive supervisor process that:
+1. **Kills Orphaned Instances**: Cleans up previous runs (Windows-aware).
+2. **Bootstraps Stack**: Launches static HTTP catalog server and dynamic SSH tunnel (`localhost.run`).
+3. **Auto-manages environment**: Rewrites `.env` with updated public WebApp URL.
+4. **Monitors and Recovers**: Runs active ping checks on SSH endpoint and auto-restarts Bot and ARQ Worker processes if they terminate or experience failures.
 
 ---
 
@@ -68,38 +55,47 @@ A single-script supervisor that manages the entire stack:
 
 ```
 ai-support-bot/
-├── main.py                  # Entrypoint: bot init, polling, background tasks
-├── config.py                # Env variables, paths, memory/Ollama settings
-├── run_all.py               # Full-stack orchestrator (bot + server + tunnel)
-├── run_all.bat              # Windows launcher for run_all.py
-├── run_bot.bat              # Windows launcher for bot-only mode
+├── main.py                  # Entrypoint: bot init, polling, background tasks, logging setup
+├── config.py                # Pydantic Settings config, database/cache urls, timeout configurations
+├── run_all.py               # Process supervisor: manages bot, web server, ARQ worker & SSH tunnel
+├── run_all.bat              # Windows orchestrator execution shortcut
+├── run_bot.bat              # Windows bot-only execution shortcut
 ├── bot/
-│   ├── handlers.py          # /start, /help, /new, callbacks, WebApp data, message handling
-│   ├── memory.py            # ConversationMemory: sessions, TTL, rate limiting, cleanup
-│   └── middleware.py        # ErrorHandlingMiddleware
+│   ├── handlers.py          # Command/message handlers, ARQ scheduling, callbacks
+│   ├── memory.py            # Chat session memory manager (SQLite/PostgreSQL wrapper)
+│   ├── middleware.py        # Global error safety middleware
+│   ├── cache.py             # RedisCache wrapper for session caching
+│   ├── health.py            # Microservice health check logic
+│   ├── storage.py           # Abstract base class for storage adapters
+│   └── storage_postgres.py  # Enterprise PostgreSQL storage implementation with asyncpg
 ├── rag/
-│   ├── loader.py            # Document loader + RecursiveCharacterTextSplitter
-│   ├── retriever.py         # ChromaDB indexing + semantic search with distance filtering
-│   ├── chain.py             # Ollama streaming generation, system prompt, session management
-│   └── guardrails.py        # Regex-based hallucination detection & response validation
+│   ├── loader.py            # Custom recursive document splitter
+│   ├── retriever.py         # Vector+BM25 Hybrid search, RRF fusion, and Reranking controller
+│   ├── chain.py             # LLM orchestration, query expansion, prompts, system instructions
+│   ├── guardrails.py        # Safety regex post-processing rules
+│   ├── bm25_index.py        # Lightweight custom TF-IDF BM25 index implementation
+│   └── reranker.py          # CrossEncoder reranking layer
+├── workers/
+│   └── llm_worker.py        # ARQ Worker performing asynchronous search & inference tasks
 ├── data/
-│   ├── knowledge_base/      # Source .txt files (about, contacts, catalog, policies, FAQ, etc.)
-│   ├── chroma_db/           # Persistent ChromaDB vector storage (auto-generated)
-│   ├── prompts/             # System prompt (system.txt)
-│   └── memory.db            # SQLite memory store
+│   ├── knowledge_base/      # Granular source knowledge text files
+│   ├── chroma_db/           # Persistent local vector storage folder (Git ignored)
+│   ├── prompts/             # System prompt template (system.txt)
+│   └── memory.db            # SQLite persistent memory file (Git ignored)
+├── logs/
+│   └── bot.jsonl            # Machine-readable rotating logs output (Git ignored)
 ├── webapp/
-│   ├── index.html           # Mini App frontend
-│   ├── style.css            # Glassmorphism UI styles
-│   ├── app.js               # Product catalog, cart logic, Telegram WebApp API integration
-│   ├── products.json        # Product database
-│   └── avatars/             # User avatar assets
+│   ├── index.html           # Storefront Mini App layout
+│   ├── style.css            # Glassmorphism frontend styles
+│   ├── app.js               # WebApp cart, search, and Telegram integration logic
+│   └── products.json        # Static mock database
 ├── tests/
-│   └── test_guardrails.py   # Unit tests for guardrails validation
-├── Dockerfile               # Python 3.10-slim based image
-├── docker-compose.yml       # Single-service config with host networking for Ollama access
-├── requirements.txt         # Python dependencies
-├── .env.example             # Template for environment variables
-└── .gitignore
+│   └── test_guardrails.py   # Automated safety validations
+├── Dockerfile               # Production image template
+├── docker-compose.yml       # Stack runner setup
+├── requirements.txt         # Project requirements manifest
+├── .env.example             # Sandbox configurations template
+└── .gitignore               # Excludes secrets, local DBs, user uploads, logs, cache
 ```
 
 ---
@@ -112,7 +108,11 @@ ai-support-bot/
 | **LLM Engine** | `Ollama` (default model: `qwen2.5-coder:32b`) |
 | **Embeddings** | `sentence-transformers` (`paraphrase-multilingual-MiniLM-L12-v2`) |
 | **Vector Database** | `ChromaDB` (persistent, cosine distance) |
-| **Text Splitting** | `langchain-text-splitters` (`RecursiveCharacterTextSplitter`) |
+| **Lexical Search** | Custom `BM25Index` (tf-idf based ranker) |
+| **Reranker Engine**| `sentence-transformers` (`cross-encoder/mmarco-mMiniLMv2-L12-H384-v1`) |
+| **Background Tasks**| `arq` (Redis async queuing) + `redis` caching |
+| **Database Storage**| `asyncpg` + PostgreSQL (durable sessions) or local SQLite |
+| **Configuration**  | `pydantic-settings` (v2 env configurations validator) |
 | **HTTP Client** | `aiohttp` (singleton session pattern) |
 | **WebApp** | Vanilla HTML/CSS/JS + Telegram WebApp API |
 | **Tunnel** | SSH to `localhost.run` (auto-managed) |
@@ -185,6 +185,9 @@ docker-compose up --build -d
 | `OLLAMA_BASE_URL` | `http://localhost:11434` | Ollama API endpoint |
 | `OLLAMA_MODEL` | `qwen2.5-coder:32b` | LLM model name |
 | `WEBAPP_URL` | `https://nico-market-catalog.loca.lt` | WebApp public URL (auto-updated by `run_all.py`) |
+| `STORAGE_BACKEND` | `memory` | Session storage adapter: `memory` (SQLite) or `postgres` |
+| `DATABASE_URL` | — | Connection string for PostgreSQL backend |
+| `REDIS_URL` | `redis://localhost:6379/0` | Connection string for Redis cache & ARQ worker |
 
 ---
 
@@ -192,20 +195,21 @@ docker-compose up --build -d
 
 The bot's knowledge comes from plain `.txt` files in `data/knowledge_base/`. On startup, they are:
 1. Loaded and split into chunks (800 chars, 150 overlap).
-2. Embedded using `paraphrase-multilingual-MiniLM-L12-v2`.
-3. Stored in ChromaDB with source metadata.
+2. Indexed using `ChromaDB` (vector embeddings) and `BM25Index` (lexical index).
+3. Used at runtime with RRF fusion and neural cross-encoder reranking.
 
 Current knowledge base structure:
-| File | Content |
-|------|---------|
-| `01_about.txt` | Company info and history |
-| `02_contacts.txt` | Official contacts and working hours |
-| `03_catalog.txt` | Full product catalog with prices |
-| `04_policies.txt` | Return, delivery, and warranty policies |
-| `05_subscriptions.txt` | Subscription plans |
-| `06_faq.txt` | Frequently asked questions |
-| `07_team.txt` | Team members |
-| `08_bot_persona.txt` | Bot personality and behavior rules |
+| Categories | Source Files | Content |
+|------------|--------------|---------|
+| **About Company** | `about_company.txt`, `about_history.txt` | Company info, history, core missions, milestones. |
+| **Bot Persona** | `bot_persona_rules.txt`, `bot_persona_story.txt` | Persona guidelines, tone constraints, styling examples, context boundaries. |
+| **Catalog Devices** | `catalog_overview.txt`, `catalog_a1_smartphones.txt` ... `catalog_a7_drones_cameras.txt` | Individual product listings, names, specs, and price ranges split by categories. |
+| **Catalog Services** | `catalog_b1_software.txt` ... `catalog_b4_games.txt`, `catalog_c_dev_design.txt`, `catalog_c_support_security.txt` | IT services, web development, custom bots, cloud plans, gaming support details. |
+| **Support Contacts** | `contacts.txt` | Support phone numbers, support emails, headquarters location, operating hours. |
+| **FAQ Sections** | `faq_general.txt`, `faq_orders_delivery.txt`, `faq_returns_warranty.txt` | Modularized answers to frequently asked customer questions. |
+| **Policies** | `policy_delivery.txt`, `policy_payment.txt`, `policy_returns.txt`, `policy_warranty.txt` | Precise legal conditions on payment methods, delivery durations, return windows. |
+| **Subscriptions** | `subscriptions.txt` | Premium SaaS tiers, SLA options, pricing, and features. |
+| **Team members** | `team.txt` | Roles, names, and departments of core team members. |
 
 To update: edit/add `.txt` files and restart the bot — the index rebuilds automatically.
 
@@ -235,17 +239,17 @@ Inline buttons: **Order status**, **Return policy**, **Contact manager**.
 
 ## ⚙️ Configuration Constants
 
-| Constant | Value | Location |
-|----------|-------|----------|
-| `MEMORY_MAX_MESSAGES` | 4 | `config.py` — max messages per session |
-| `MEMORY_SESSION_TTL` | 600s (10 min) | `config.py` — session expiration |
-| `OLLAMA_TIMEOUT` | 180s | `config.py` — LLM generation timeout |
-| `RATE_LIMIT` | 3.0s | `bot/handlers.py` — per-user cooldown |
-| `MAX_CONCURRENT_GENERATIONS` | 1 | `bot/handlers.py` — generation semaphore |
-| `distance_threshold` | 0.9 | `rag/retriever.py` — max cosine distance for chunks |
-| `chunk_size` / `chunk_overlap` | 800 / 150 | `rag/loader.py` — text splitting params |
-| `temperature` | 0.5 | `rag/chain.py` — LLM sampling temperature |
-| `num_predict` | 512 | `rag/chain.py` — max generated tokens |
+| Constant | Value | Location | Description |
+|----------|-------|----------|-------------|
+| `MEMORY_MAX_MESSAGES` | 4 | `config.py` | max messages kept in active memory context |
+| `MEMORY_SESSION_TTL` | 600s (10 min) | `config.py` | session timeout |
+| `OLLAMA_TIMEOUT` | 300s | `config.py` | LLM generation timeout |
+| `RATE_LIMIT` | 3.0s | `bot/handlers.py` | per-user rate limit interval |
+| `distance_threshold` | 1.5 | `rag/retriever.py` | threshold for hybrid vector filter |
+| `chunk_size` / `chunk_overlap` | 800 / 150 | `rag/loader.py` | text chunk parameters |
+| `temperature` | 0.5 | `rag/chain.py` | LLM temperature |
+| `num_predict` | 768 | `rag/chain.py` | maximum generated tokens limit |
+| `num_ctx` | 16384 | `rag/chain.py` | model context window allocation size |
 
 ---
 
