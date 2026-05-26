@@ -12,7 +12,7 @@ REDIS_HOST="${REDIS_HOST:-redis}"
 REDIS_PORT="${REDIS_PORT:-6379}"
 
 echo "[tunnel] Ожидаем готовности Redis..."
-until redis-cli -h "$REDIS_HOST" -p "$REDIS_PORT" ping | grep -q PONG; do
+until redis-cli -h "$REDIS_HOST" -p "$REDIS_PORT" -a "$REDIS_PASSWORD" --no-auth-warning ping | grep -q PONG; do
   sleep 1
 done
 echo "[tunnel] Redis готов."
@@ -33,7 +33,7 @@ connect_tunnel() {
       if echo "$line" | grep -qE "https://[a-zA-Z0-9-]+\.lhr\.life"; then
         URL=$(echo "$line" | grep -oE "https://[a-zA-Z0-9-]+\.lhr\.life")
         echo "[tunnel] ✅ Получен URL: $URL"
-        redis-cli -h "$REDIS_HOST" -p "$REDIS_PORT" SET webapp:tunnel_url "$URL" EX 86400
+        redis-cli -h "$REDIS_HOST" -p "$REDIS_PORT" -a "$REDIS_PASSWORD" --no-auth-warning SET webapp:tunnel_url "$URL" EX 86400
         echo "[tunnel] URL записан в Redis."
       fi
     done
