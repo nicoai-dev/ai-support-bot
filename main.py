@@ -121,6 +121,9 @@ async def main():
     dp.update.outer_middleware(ErrorHandlingMiddleware())
 
     # Регистрация роутеров и событий
+    # Admin-команды (регистрируем ПЕРЕД основным роутером, чтобы /admin команды имели приоритет)
+    from bot.admin import admin_router
+    dp.include_router(admin_router)
     dp.include_router(router)
     dp.startup.register(on_startup)
     
