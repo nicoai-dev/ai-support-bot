@@ -139,7 +139,11 @@ async def cmd_start(message: types.Message):
         "👋 Добро пожаловать в Nico Market!\n\n"
         "Я — Нико, цифровой консьерж и первый AI-сотрудник компании. "
         "К Вашим услугам: консультации по ассортименту, помощь с заказами и навигация по правилам магазина.\n\n"
-        "Чем могу быть полезен?",
+        "Чем могу быть полезен?\n\n"
+        "🔒 Продолжая использование бота, Вы соглашаетесь с нашей "
+        "политикой конфиденциальности. Подробнее — спросите «политика конфиденциальности».\n\n"
+        "🤖 _Обратите внимание: я — AI-ассистент. Мои ответы могут содержать неточности. "
+        "Для подтверждения важной информации рекомендую связаться с менеджером._",
         reply_markup=await get_reply_keyboard(message.from_user.id, message.from_user.first_name)
     )
     await message.answer(
@@ -267,9 +271,27 @@ async def handle_web_app_data(message: types.Message):
         await message.answer(f"⚠️ При обработке заказа произошёл сбой. Пожалуйста, повторите попытку или обратитесь к менеджеру: {settings.SUPPORT_PHONE}.", reply_markup=await get_reply_keyboard(message.from_user.id, message.from_user.first_name))
 
 
+@router.message(Command("privacy"))
+async def cmd_privacy(message: types.Message):
+    """Показать политику конфиденциальности."""
+    privacy_text = (
+        "🔒 **Политика конфиденциальности Nico Market**\n\n"
+        "**Какие данные мы собираем:**\n"
+        "• Ваш Telegram ID и имя профиля\n"
+        "• Текст сообщений (удаляется через 10 мин неактивности)\n"
+        "• Данные заказов из Mini App\n\n"
+        "**Ваши права:**\n"
+        f"• Очистить историю диалога: /new\n"
+        f"• Запросить полное удаление данных: {settings.SUPPORT_EMAIL}\n\n"
+        f"По вопросам конфиденциальности: {settings.SUPPORT_PHONE}"
+    )
+    await message.answer(privacy_text, parse_mode="Markdown")
+
+
 @router.message()
-async def handle_message(message: types.Message):
+async def handle_message(message: types.Message, data: dict = None):
     user_id = message.from_user.id
+    request_id = data.get("request_id", "unknown") if data else "unknown"
     
     # Rate limiting через объект memory
     if not await bot.memory.memory.check_rate_limit(user_id, RATE_LIMIT):
@@ -366,6 +388,10 @@ async def handle_message(message: types.Message):
                     )
             
             await processing_msg.edit_text(validated_answer)
+            
+            if warnings and len(warnings) < 3:
+                # Мягкий дисклеймер при наличии предупреждений
+                logging.info(f"[{request_id}] Guardrail warnings: {warnings}")
             
             # Лог для аудита галлюцинаций
             logging.info(

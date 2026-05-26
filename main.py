@@ -96,6 +96,18 @@ async def on_startup(bot: Bot):
     health_runner = await start_health_server()
     logging.info("⚕️ Healthcheck server запущен на порту 8080")
     
+    # Установка команд меню
+    try:
+        from aiogram.types import BotCommand
+        await bot.set_my_commands([
+            BotCommand(command="new", description="🔄 Начать заново"),
+            BotCommand(command="help", description="💡 Справка"),
+            BotCommand(command="privacy", description="🔒 Политика конфиденциальности"),
+        ])
+        logging.info("✅ Меню команд бота успешно установлено")
+    except Exception as cmd_err:
+        logging.warning(f"⚠️ Не удалось установить меню команд: {cmd_err}")
+
     logging.info("🚀 Бот Nico Market запущен!")
 
     # Инициализация ARQ
