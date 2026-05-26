@@ -1,5 +1,6 @@
 from sentence_transformers import CrossEncoder
 import asyncio
+import logging
 
 _reranker: CrossEncoder | None = None
 
@@ -24,5 +25,5 @@ async def rerank(query: str, chunks: list[dict], top_k: int = 5) -> list[dict]:
     scored.sort(key=lambda x: x[1], reverse=True)
     
     for chunk, score in scored[:top_k]:
-        print(f"Reranker score: {score:.4f} | Chunk: {chunk['source']}", flush=True)
+        logging.debug(f"Reranker score: {score:.4f} | Chunk: {chunk['source']}")
     return [chunk for chunk, score in scored[:top_k] if score > -6.0]

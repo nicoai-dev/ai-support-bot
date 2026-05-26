@@ -41,7 +41,8 @@ def setup_logging(log_dir: str = "logs", level: str = "INFO"):
     file_handler.setFormatter(JSONFormatter())
     root.addHandler(file_handler)
 
-setup_logging()
+from config import settings
+setup_logging(level=settings.LOG_LEVEL)
 
 async def cleanup_loop():
     """Периодическая очистка протухших сессий из памяти."""

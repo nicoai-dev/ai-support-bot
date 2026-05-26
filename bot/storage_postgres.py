@@ -1,4 +1,5 @@
 import asyncpg
+import logging
 from bot.storage import StorageBackend, MessageRecord
 
 class PostgresStorage(StorageBackend):
@@ -35,6 +36,11 @@ class PostgresStorage(StorageBackend):
     async def add_message(self, user_id: int, role: str, text: str) -> None:
         async with self._pool.acquire() as conn:
             async with conn.transaction():
+                # Блокируем строки пользователя для предотвращения race condition
+                await conn.execute(
+                    "SELECT 1 FROM messages WHERE user_id = $1 FOR UPDATE",
+                    user_id,
+                )
                 await conn.execute(
                     "INSERT INTO messages (user_id, role, text) VALUES ($1, $2, $3)",
                     user_id, role, text
@@ -78,16 +84,25 @@ class PostgresStorage(StorageBackend):
             await conn.execute("DELETE FROM messages WHERE user_id = $1", user_id)
 
     async def cleanup_expired(self, ttl: int = None) -> int:
+        """Удалить истёкшие сессии. Возвращает количество затронутых пользователей."""
         if ttl is None:
             ttl = self.session_ttl
         async with self._pool.acquire() as conn:
-            result = await conn.execute("""
-                DELETE FROM messages 
-                WHERE user_id IN (
-                    SELECT user_id FROM messages 
-                    GROUP BY user_id 
-                    HAVING MAX(created_at) < NOW() - INTERVAL '1 second' * $1
-                )
+            # Сначала находим затронутых пользователей для подсчёта
+            expired_users = await conn.fetch("""
+                SELECT user_id FROM messages 
+                GROUP BY user_id 
+                HAVING MAX(created_at) < NOW() - INTERVAL '1 second' * $1
             """, ttl)
-            # count deleted messages. returning deleted users count is more complex, just return 0 for now as it's not strictly used
-            return 0
+            
+            if expired_users:
+                user_ids = [row['user_id'] for row in expired_users]
+                await conn.execute(
+                    "DELETE FROM messages WHERE user_id = ANY($1::bigint[])",
+                    user_ids,
+                )
+            
+            count = len(expired_users)
+            if count > 0:
+                logging.info(f"🧹 Очищено {count} истёкших сессий из PostgreSQL")
+            return count
