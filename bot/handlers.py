@@ -22,10 +22,15 @@ generation_semaphore = asyncio.Semaphore(MAX_CONCURRENT_GENERATIONS)
 arq_pool = None
 
 
-async def get_reply_keyboard(user_id: int = 0, first_name: str = "Гость", photo_url: str = ""):
+async def get_reply_keyboard(user_id: int = 0, first_name: str = "Гость", photo_file_id: str = ""):
+    """Сформировать клавиатуру с кнопкой открытия WebApp.
+    
+    БЕЗОПАСНОСТЬ: НЕ передаём BOT_TOKEN, photo URL или другие секреты через query string.
+    WebApp получает данные пользователя напрямую из Telegram SDK (initDataUnsafe.user).
+    В URL передаём только first_name для быстрого приветствия до инициализации SDK.
+    """
     from urllib.parse import quote
     encoded_name = quote(first_name or "Гость")
-    encoded_photo = quote(photo_url or "")
 
     # Читаем актуальный URL туннеля из Redis (пишет tunnel-контейнер).
     # Fallback — значение из .env (config.WEBAPP_URL).
@@ -38,7 +43,9 @@ async def get_reply_keyboard(user_id: int = 0, first_name: str = "Гость", p
     except Exception:
         pass  # Redis недоступен — берём из конфига
 
-    url = f"{webapp_url}?user_id={user_id}&first_name={encoded_name}&photo_url={encoded_photo}"
+    # ВАЖНО: НЕ передаём user_id и photo_url через URL — это PII и потенциальная утечка.
+    # WebApp получит user данные через Telegram.WebApp.initDataUnsafe.user
+    url = f"{webapp_url}?first_name={encoded_name}"
     return ReplyKeyboardMarkup(
         keyboard=[
             [KeyboardButton(text="🛒 Каталог Nico Market", web_app=WebAppInfo(url=url))]
@@ -50,6 +57,13 @@ async def get_reply_keyboard(user_id: int = 0, first_name: str = "Гость", p
 from bot.cache import redis_cache
 
 async def get_user_photo_url(message: types.Message) -> str:
+    """Получить URL аватарки пользователя.
+    
+    БЕЗОПАСНОСТЬ: Используем file_id вместо прямого URL с токеном.
+    file_id безопасен для передачи клиенту — он не содержит BOT_TOKEN.
+    Для отображения в WebApp используем Telegram getUserProfilePhotos API
+    через file_id, который Telegram сам резолвит в CDN-ссылку.
+    """
     cache_key = f"avatar:{message.from_user.id}"
     cached = await redis_cache.get(cache_key)
     if cached:
@@ -58,13 +72,13 @@ async def get_user_photo_url(message: types.Message) -> str:
     try:
         photos = await message.bot.get_user_profile_photos(user_id=message.from_user.id, limit=1)
         if photos.total_count > 0:
+            # Используем file_id — безопасный идентификатор, не содержащий токен
             file_id = photos.photos[0][-1].file_id
-            file_info = await message.bot.get_file(file_id)
-            url = f"https://api.telegram.org/file/bot{config.BOT_TOKEN}/{file_info.file_path}"
-            await redis_cache.set(cache_key, url, ttl=3600)
-            return url
+            # Кешируем file_id, а не URL с токеном
+            await redis_cache.set(cache_key, file_id, ttl=3600)
+            return file_id
     except Exception as e:
-        logging.error(f"Error fetching user profile photo: {e}")
+        logging.error(f"Ошибка получения аватарки пользователя: {e}")
     return ""
 
 
@@ -78,13 +92,12 @@ def get_main_keyboard():
 
 @router.message(CommandStart())
 async def cmd_start(message: types.Message):
-    photo_url = await get_user_photo_url(message)
     await message.answer(
         "👋 Добро пожаловать в Nico Market!\n\n"
         "Я — Нико, цифровой консьерж и первый AI-сотрудник компании. "
         "К Вашим услугам: консультации по ассортименту, помощь с заказами и навигация по правилам магазина.\n\n"
         "Чем могу быть полезен?",
-        reply_markup=await get_reply_keyboard(message.from_user.id, message.from_user.first_name, photo_url)
+        reply_markup=await get_reply_keyboard(message.from_user.id, message.from_user.first_name)
     )
     await message.answer(
         "💡 Для быстрого доступа воспользуйтесь панелью ниже:",
@@ -108,8 +121,7 @@ async def cmd_help(message: types.Message):
 @router.message(Command("new"))
 async def cmd_new(message: types.Message):
     await bot.memory.memory.clear(message.from_user.id)
-    photo_url = await get_user_photo_url(message)
-    await message.answer("🔄 Контекст диалога обнулён. Я готов к новому запросу — слушаю Вас.", reply_markup=await get_reply_keyboard(message.from_user.id, message.from_user.first_name, photo_url))
+    await message.answer("🔄 Контекст диалога обнулён. Я готов к новому запросу — слушаю Вас.", reply_markup=await get_reply_keyboard(message.from_user.id, message.from_user.first_name))
 
 
 @router.callback_query()
@@ -140,9 +152,8 @@ async def handle_web_app_data(message: types.Message):
         items = data.get("items", {})
         total = data.get("total", 0)
         
-        photo_url = await get_user_photo_url(message)
         if not items:
-            await message.answer("🛒 Корзина пуста. Воспользуйтесь каталогом, чтобы выбрать интересующие позиции.", reply_markup=await get_reply_keyboard(message.from_user.id, message.from_user.first_name, photo_url))
+            await message.answer("🛒 Корзина пуста. Воспользуйтесь каталогом, чтобы выбрать интересующие позиции.", reply_markup=await get_reply_keyboard(message.from_user.id, message.from_user.first_name))
             return
             
         receipt = "🛒 **Заказ оформлен**\n\n"
@@ -156,7 +167,7 @@ async def handle_web_app_data(message: types.Message):
             "📧 support@nicomarket.fj"
         )
         
-        await message.answer(receipt, parse_mode="Markdown", reply_markup=await get_reply_keyboard(message.from_user.id, message.from_user.first_name, photo_url))
+        await message.answer(receipt, parse_mode="Markdown", reply_markup=await get_reply_keyboard(message.from_user.id, message.from_user.first_name))
         
         # Сохраняем информацию о заказе в историю диалога (контекст ИИ)
         user_msg = "Оформил заказ в каталоге: " + ", ".join([f"{item['title']} ({item['count']} шт.)" for item in items.values()]) + f" на сумму ${total}"
@@ -164,27 +175,26 @@ async def handle_web_app_data(message: types.Message):
         await bot.memory.memory.add_message(message.from_user.id, "assistant", receipt)
     except Exception as e:
         logging.error(f"Ошибка парсинга данных MiniApp: {e}")
-        await message.answer("⚠️ При обработке заказа произошёл сбой. Пожалуйста, повторите попытку или обратитесь к менеджеру: +679 764-2658.", reply_markup=await get_reply_keyboard(message.from_user.id, message.from_user.first_name, photo_url))
+        await message.answer("⚠️ При обработке заказа произошёл сбой. Пожалуйста, повторите попытку или обратитесь к менеджеру: +679 764-2658.", reply_markup=await get_reply_keyboard(message.from_user.id, message.from_user.first_name))
 
 
 @router.message()
 async def handle_message(message: types.Message):
     user_id = message.from_user.id
-    photo_url = await get_user_photo_url(message)
     
     # Rate limiting через объект memory
     if not await bot.memory.memory.check_rate_limit(user_id, RATE_LIMIT):
-        await message.answer("⏳ Я обрабатываю Ваш предыдущий запрос. Пожалуйста, подождите несколько секунд.", reply_markup=await get_reply_keyboard(message.from_user.id, message.from_user.first_name, photo_url))
+        await message.answer("⏳ Я обрабатываю Ваш предыдущий запрос. Пожалуйста, подождите несколько секунд.", reply_markup=await get_reply_keyboard(message.from_user.id, message.from_user.first_name))
         return
 
     # Обработка нетекстовых сообщений
     if not message.text:
-        await message.answer("На данный момент я воспринимаю только текстовые сообщения. Пожалуйста, сформулируйте Ваш вопрос текстом.", reply_markup=await get_reply_keyboard(message.from_user.id, message.from_user.first_name, photo_url))
+        await message.answer("На данный момент я воспринимаю только текстовые сообщения. Пожалуйста, сформулируйте Ваш вопрос текстом.", reply_markup=await get_reply_keyboard(message.from_user.id, message.from_user.first_name))
         return
 
     # Проверка длины сообщения
     if len(message.text) > 1000:
-        await message.answer("Сообщение превышает допустимый объём. Пожалуйста, сократите запрос до 1 000 символов — это поможет мне дать точный ответ.", reply_markup=await get_reply_keyboard(message.from_user.id, message.from_user.first_name, photo_url))
+        await message.answer("Сообщение превышает допустимый объём. Пожалуйста, сократите запрос до 1 000 символов — это поможет мне дать точный ответ.", reply_markup=await get_reply_keyboard(message.from_user.id, message.from_user.first_name))
         return
 
     # Показываем статус "печатает"
