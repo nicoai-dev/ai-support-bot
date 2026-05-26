@@ -222,13 +222,10 @@ async def handle_message(message: types.Message):
                 full_answer = ""
         else:
             # Fallback на локальную обработку если ARQ не настроен
-            search_query = message.text
-            if chat_history:
-                # Добавляем последние реплики пользователя для сохранения контекста поиска
-                context_queries = [msg.text for msg in chat_history[-4:] if msg.role == "user"]
-                context_queries.append(message.text)
-                search_query = " ".join(context_queries)
-                
+            from workers.llm_worker import _build_search_query
+            history_dicts = [{"role": msg.role, "text": msg.text} for msg in chat_history] if chat_history else []
+            search_query = _build_search_query(message.text, history_dicts)
+
             chunks = await search(search_query, top_k=8, distance_threshold=1.5)
             if not chunks:
                 logging.warning("⚠️ Ничего не найдено в базе знаний! Использую fallback.")
