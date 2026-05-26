@@ -111,7 +111,9 @@ async def main():
     bot = Bot(token=BOT_TOKEN)
     dp = Dispatcher()
 
-    # Регистрируем middleware для обработки ошибок
+    # Регистрируем middleware для correlation ID и обработки ошибок
+    from bot.middleware import RequestContextMiddleware
+    dp.update.outer_middleware(RequestContextMiddleware())
     dp.update.outer_middleware(ErrorHandlingMiddleware())
 
     # Регистрация роутеров и событий

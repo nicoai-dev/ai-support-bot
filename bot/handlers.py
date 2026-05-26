@@ -1,5 +1,7 @@
 import logging
 import time
+from bot.metrics import messages_total, llm_requests_total, llm_latency_seconds, guardrails_triggered, errors_total
+import time as _time
 import asyncio
 from aiogram import Router, types
 from aiogram.filters import CommandStart, Command
@@ -48,6 +50,9 @@ def verify_webapp_data(init_data: str, bot_token: str) -> bool:
         return False
 
 router = Router()
+
+from bot.middleware import RequestContextMiddleware
+router.message.middleware(RequestContextMiddleware())
 
 from arq import create_pool
 from arq.connections import RedisSettings
@@ -235,6 +240,8 @@ async def handle_message(message: types.Message):
         await message.answer("⏳ Я обрабатываю Ваш предыдущий запрос. Пожалуйста, подождите несколько секунд.", reply_markup=await get_reply_keyboard(message.from_user.id, message.from_user.first_name))
         return
 
+    messages_total.labels(type="text").inc()
+
     # Обработка нетекстовых сообщений
     if not message.text:
         await message.answer("На данный момент я воспринимаю только текстовые сообщения. Пожалуйста, сформулируйте Ваш вопрос текстом.", reply_markup=await get_reply_keyboard(message.from_user.id, message.from_user.first_name))
@@ -291,6 +298,7 @@ async def handle_message(message: types.Message):
             full_answer = ""
             last_edit_time = time.time()
             async with generation_semaphore:
+                llm_start = _time.time()
                 async for partial_answer in generate_answer_stream(message.text, chunks, chat_history):
                     if not partial_answer:
                         continue
@@ -303,6 +311,8 @@ async def handle_message(message: types.Message):
                             last_edit_time = now
                         except Exception as edit_error:
                             logging.debug(f"Пропуск обновления стриминга: {edit_error}")
+                llm_latency_seconds.observe(_time.time() - llm_start)
+                llm_requests_total.labels(provider=settings.LLM_PROVIDER, status="success").inc()
 
         from rag.guardrails import validate_response
 

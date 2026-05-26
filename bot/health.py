@@ -24,6 +24,20 @@ async def start_health_server(port: int = 8080):
     """
     app = web.Application()
     app.router.add_get("/health", health_handler)
+    # Prometheus метрики
+    try:
+        from prometheus_client import generate_latest, CONTENT_TYPE_LATEST
+        
+        async def metrics_handler(request):
+            return web.Response(
+                body=generate_latest(),
+                content_type=CONTENT_TYPE_LATEST,
+            )
+        
+        app.router.add_get("/metrics", metrics_handler)
+        logging.info("📊 Prometheus метрики доступны на /metrics")
+    except ImportError:
+        logging.warning("⚠️ prometheus-client не установлен — метрики отключены")
     runner = web.AppRunner(app)
     await runner.setup()
     # ВАЖНО: Слушаем ТОЛЬКО на localhost, не на 0.0.0.0
