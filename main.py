@@ -78,6 +78,10 @@ async def on_startup(bot: Bot):
         from bot.memory import init_postgres_memory
         logging.info("Подключение к PostgreSQL...")
         await init_postgres_memory()
+        # Инициализируем таблицу заказов
+        from bot.orders import order_storage
+        from bot.memory import memory as storage
+        await order_storage.init_postgres(storage._pool)
     logging.info("🔎 Проверка связи с Ollama...")
     if not await check_ollama_health():
         logging.error("❌ КРИТИЧЕСКАЯ ОШИБКА: Сервис Ollama недоступен! Запустите Ollama и попробуйте снова.")

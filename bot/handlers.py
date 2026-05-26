@@ -9,6 +9,7 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 from aiogram.types import ReplyKeyboardMarkup, KeyboardButton, WebAppInfo
 import config
 from config import settings
+from bot.orders import order_storage
 from rag.retriever import search
 from rag.chain import generate_answer_stream
 import bot.memory
@@ -209,19 +210,54 @@ async def handle_web_app_data(message: types.Message):
             await message.answer("🛒 Корзина пуста. Воспользуйтесь каталогом, чтобы выбрать интересующие позиции.", reply_markup=await get_reply_keyboard(message.from_user.id, message.from_user.first_name))
             return
             
-        receipt = "🛒 **Заказ оформлен**\n\n"
-        for item_id, item in items.items():
-            receipt += f"• {item['title']} — {item['count']} шт. (${item['price']} / шт.)\n"
-            
-        receipt += f"\n💵 **Итого к оплате: ${total}**\n\n"
-        receipt += (
-            f"Благодарим за выбор {settings.COMPANY_NAME}! Менеджер свяжется с Вами для подтверждения и уточнения деталей доставки.\n\n"
-            f"📞 {settings.SUPPORT_PHONE} ({settings.SUPPORT_HOURS})\n"
-            f"📧 {settings.SUPPORT_EMAIL}"
+        # Создаём заказ и сохраняем в хранилище
+        order = await order_storage.create_order(
+            user_id=message.from_user.id,
+            user_name=message.from_user.first_name or "Гость",
+            items=data.get("items", {}),
+            total=data.get("total", 0),
         )
         
-        await message.answer(receipt, parse_mode="Markdown", reply_markup=await get_reply_keyboard(message.from_user.id, message.from_user.first_name))
+        # Формируем чек с реальным номером заказа
+        receipt_lines = [f"🧾 **Заказ {order.order_id} принят!**\n"]
+        items = data.get("items", {})
+        for product_id, item_data in items.items():
+            title = item_data.get("title", "Товар")
+            price = item_data.get("price", 0)
+            count = item_data.get("count", 1)
+            receipt_lines.append(f"  • {title} × {count} — ${price * count}")
         
+        total = data.get("total", 0)
+        receipt_lines.append(f"\n💰 **Итого: ${total}**")
+        receipt_lines.append(f"📋 **Номер заказа: {order.order_id}**")
+        receipt_lines.append(f"\n✅ Наш менеджер свяжется с Вами для подтверждения.")
+        receipt_lines.append(f"📞 {settings.SUPPORT_PHONE}")
+        
+        receipt = "\n".join(receipt_lines)
+        
+        keyboard = await get_reply_keyboard(message.from_user.id, message.from_user.first_name)
+        await message.answer(receipt, parse_mode="Markdown", reply_markup=keyboard)
+        
+        # Уведомление менеджерам
+        if settings.MANAGER_CHAT_ID:
+            try:
+                manager_text = (
+                    f"🆕 **Новый заказ {order.order_id}**\n\n"
+                    f"👤 Клиент: {message.from_user.first_name} (ID: {message.from_user.id})\n"
+                    f"💰 Сумма: ${total}\n"
+                    f"📦 Товаров: {len(items)}\n\n"
+                )
+                for pid, item in items.items():
+                    manager_text += f"  • {item.get('title', '?')} × {item.get('count', 1)}\n"
+                
+                await message.bot.send_message(
+                    chat_id=settings.MANAGER_CHAT_ID,
+                    text=manager_text,
+                    parse_mode="Markdown",
+                )
+            except Exception as e:
+                logging.error(f"Ошибка уведомления менеджера: {e}")
+
         # Сохраняем информацию о заказе в историю диалога (контекст ИИ)
         user_msg = "Оформил заказ в каталоге: " + ", ".join([f"{item['title']} ({item['count']} шт.)" for item in items.values()]) + f" на сумму ${total}"
         await bot.memory.memory.add_message(message.from_user.id, "user", user_msg)
