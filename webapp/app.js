@@ -7,6 +7,14 @@ tg.expand();
 // Сообщаем Telegram, что WebApp загружен
 tg.ready();
 
+// === БЕЗОПАСНОСТЬ: экранирование HTML для защиты от XSS ===
+function escapeHtml(text) {
+    if (!text) return '';
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
+}
+
 // Фиксируем цвета для темной темы, игнорируя системную тему Telegram
 document.documentElement.style.setProperty('--bg-color', '#0f0c1b');
 document.documentElement.style.setProperty('--text-color', '#f3f4f6');
@@ -248,11 +256,11 @@ function renderProducts(categoryFilter = "hardware", searchQuery = "") {
         card.innerHTML = `
             <div class="product-card-clickable" onclick="openProductModal(${p.id})">
                 <div class="product-img">${p.emoji}</div>
-                <div class="product-title">${p.title}</div>
-                <div class="product-desc">${p.desc}</div>
+                <div class="product-title">${escapeHtml(p.title)}</div>
+                <div class="product-desc">${escapeHtml(p.desc)}</div>
             </div>
             <div class="product-footer">
-                <div class="product-price">$${p.price}</div>
+                <div class="product-price">$${escapeHtml(String(p.price))}</div>
                 <button class="btn-add" onclick="addToCart(${p.id}, event)">
                     ${isInCart ? `+${countInCart}` : '+'}
                 </button>
@@ -663,7 +671,7 @@ window.renderCartModalItems = function() {
             <div class="cart-item-info" onclick="openProductModal(${id})">
                 <span class="cart-item-emoji">${product ? product.emoji : '📦'}</span>
                 <div class="cart-item-details">
-                    <span class="cart-item-title">${item.title}</span>
+                    <span class="cart-item-title">${escapeHtml(item.title)}</span>
                     <span class="cart-item-price">$${item.price} × ${item.count}</span>
                 </div>
             </div>

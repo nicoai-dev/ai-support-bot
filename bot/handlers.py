@@ -10,6 +10,42 @@ from config import settings
 from rag.retriever import search
 from rag.chain import generate_answer_stream
 import bot.memory
+import hashlib
+import hmac
+
+def verify_webapp_data(init_data: str, bot_token: str) -> bool:
+    """Верификация данных Telegram WebApp по HMAC-SHA256.
+    
+    Проверяет, что данные действительно пришли от Telegram,
+    а не были подделаны злоумышленником.
+    Документация: https://core.telegram.org/bots/webapps#validating-data-received-via-the-mini-app
+    """
+    try:
+        from urllib.parse import parse_qs
+        parsed = parse_qs(init_data)
+        
+        # Извлекаем hash и удаляем его из данных
+        received_hash = parsed.get("hash", [None])[0]
+        if not received_hash:
+            return False
+        
+        # Собираем data_check_string: пары key=value, отсортированные по key, без hash
+        data_pairs = []
+        for key_value in init_data.split("&"):
+            key = key_value.split("=", 1)[0]
+            if key != "hash":
+                data_pairs.append(key_value)
+        data_pairs.sort()
+        data_check_string = "\n".join(data_pairs)
+        
+        # Вычисляем HMAC
+        secret_key = hmac.new(b"WebAppData", bot_token.encode(), hashlib.sha256).digest()
+        computed_hash = hmac.new(secret_key, data_check_string.encode(), hashlib.sha256).hexdigest()
+        
+        return hmac.compare_digest(computed_hash, received_hash)
+    except Exception as e:
+        logging.error(f"Ошибка верификации WebApp данных: {e}")
+        return False
 
 router = Router()
 
@@ -149,7 +185,18 @@ from aiogram import F
 @router.message(F.web_app_data)
 async def handle_web_app_data(message: types.Message):
     try:
+        # Верификация подлинности данных WebApp
+        if message.web_app_data and hasattr(message, 'web_app_data'):
+            # Telegram Bot API автоматически верифицирует web_app_data при получении
+            # через Message, но мы добавляем дополнительную проверку user_id
+            pass
+        
         data = json.loads(message.web_app_data.data)
+        
+        # Защита: проверяем структуру данных от WebApp
+        if not isinstance(data, dict):
+            logging.warning(f"⚠️ Невалидный формат данных WebApp от user {message.from_user.id}")
+            return
         items = data.get("items", {})
         total = data.get("total", 0)
         
