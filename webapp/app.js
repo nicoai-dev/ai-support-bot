@@ -94,125 +94,31 @@ if (!loadTelegramUser()) {
     }, 100);
 }
 
-// Реальный ассортимент из нашей базы знаний (03_catalog.txt)
-const PRODUCTS = [
-    // --- КАТЕГОРИЯ A: ФИЗИЧЕСКИЕ ТОВАРЫ (hardware) ---
-    // A1. Смартфоны и планшеты
-    { id: 1, title: "iPhone 16 Pro Max 256GB", desc: "Экран 6.9\" Super Retina XDR, Камера 48MP, Гарантия 12 мес.", price: 1199, emoji: "📱", category: "hardware" },
-    { id: 2, title: "Samsung Galaxy S25 Ultra 512GB", desc: "Dynamic AMOLED 2X, Камера 200MP, S Pen, Гарантия 12 мес.", price: 1299, emoji: "🤖", category: "hardware" },
-    { id: 3, title: "Google Pixel 9 Pro 128GB", desc: "Экран 6.3\" LTPO, Чистый Android, AI Gemini, Гарантия 12 мес.", price: 999, emoji: "👾", category: "hardware" },
-    { id: 4, title: "iPad Pro M4 13\" 256GB", desc: "Тончайший корпус, Tandem OLED, Чип M4, Гарантия 12 мес.", price: 1299, emoji: "🍏", category: "hardware" },
-    { id: 5, title: "Samsung Galaxy Tab S10 Ultra", desc: "Экран 14.6\", Защита IP68, Тонкий корпус, Гарантия 12 мес.", price: 1199, emoji: "📟", category: "hardware" },
-    { id: 6, title: "OnePlus 13 256GB", desc: "Чип Snapdragon 8 Elite, Камера Hasselblad, Гарантия 12 мес.", price: 799, emoji: "⚡", category: "hardware" },
-    { id: 7, title: "Xiaomi 15 Pro 512GB", desc: "Оптика Leica, Батарея 5400мАч, Быстрая зарядка, Гарантия 12 мес.", price: 699, emoji: "🐉", category: "hardware" },
+// Каталог загружается динамически из products.json (единый источник правды)
+let PRODUCTS = [];
 
-    // A2. Ноутбуки и компьютеры
-    { id: 8, title: "MacBook Pro 16\" M4 Pro", desc: "36GB RAM, 512GB SSD, Экран Liquid Retina XDR, Гарантия 12 мес.", price: 2499, emoji: "💻", category: "hardware" },
-    { id: 9, title: "MacBook Air 15\" M4", desc: "16GB RAM, 256GB SSD, Бесшумный, Легкий, Гарантия 12 мес.", price: 1299, emoji: "☁️", category: "hardware" },
-    { id: 10, title: "Dell XPS 16", desc: "Intel Ultra 9, 32GB RAM, 1TB SSD, OLED Сенсорный, Гарантия 12 мес.", price: 1899, emoji: "💎", category: "hardware" },
-    { id: 11, title: "Lenovo ThinkPad X1 Carbon Gen 12", desc: "Бизнес-классика, Корпус из углеволокна, Гарантия 12 мес.", price: 1749, emoji: "💼", category: "hardware" },
-    { id: 12, title: "ASUS ROG Zephyrus G16", desc: "Геймерский монстр, Чип RTX 5080, OLED 240Hz, Гарантия 12 мес.", price: 2299, emoji: "🎮", category: "hardware" },
-    { id: 13, title: "Framework Laptop 16", desc: "Модульный и легко ремонтируемый ноутбук, Гарантия 12 мес.", price: 1399, emoji: "🔧", category: "hardware" },
-    { id: 14, title: "Mac Mini M4 Pro", desc: "24GB RAM, 512GB SSD, Суперкомпактный ПК, Гарантия 12 мес.", price: 1399, emoji: "📦", category: "hardware" },
-
-    // A3. Аудиотехника
-    { id: 15, title: "Apple AirPods Pro 3", desc: "Адаптивное шумоподавление, Улучшенный звук, Гарантия 12 мес.", price: 249, emoji: "🎵", category: "hardware" },
-    { id: 16, title: "Sony WH-1000XM6", desc: "Полноразмерные наушники, Абсолютная тишина, Гарантия 12 мес.", price: 349, emoji: "🎧", category: "hardware" },
-    { id: 17, title: "Bose QuietComfort Ultra", desc: "Премиальные наушники, Максимальный комфорт, Гарантия 12 мес.", price: 429, emoji: "🎹", category: "hardware" },
-    { id: 18, title: "Marshall Emberton III", desc: "Портативная колонка, Легендарный рок-дизайн, Гарантия 12 мес.", price: 169, emoji: "📻", category: "hardware" },
-    { id: 19, title: "JBL Charge 6", desc: "Мощный бас, Встроенный павербанк, Влагозащита, Гарантия 12 мес.", price: 179, emoji: "🔊", category: "hardware" },
-    { id: 20, title: "Sonos Era 300", desc: "Умная домашняя колонка, Пространственный звук, Гарантия 12 мес.", price: 449, emoji: "🎼", category: "hardware" },
-
-    // A4. Умный дом и IoT
-    { id: 21, title: "Apple HomePod mini", desc: "Компактная смарт-колонка, Интеграция с Siri, Гарантия 12 мес.", price: 99, emoji: "🍎", category: "hardware" },
-    { id: 22, title: "Google Nest Hub Max", desc: "Экран 10\", Камера наблюдения, Google Ассистент, Гарантия 12 мес.", price: 229, emoji: "📺", category: "hardware" },
-    { id: 23, title: "Ring Video Doorbell Pro 2", desc: "Умный видеозвонок, Запись 1536p HD, Гарантия 12 мес.", price: 249, emoji: "🔔", category: "hardware" },
-    { id: 24, title: "Philips Hue Starter Kit", desc: "3 умные лампы + блок управления мостом, Гарантия 24 мес.", price: 129, emoji: "💡", category: "hardware" },
-    { id: 25, title: "iRobot Roomba j9+", desc: "Робот-пылесос с автовыгрузкой мусора, Гарантия 12 мес.", price: 799, emoji: "🧹", category: "hardware" },
-    { id: 26, title: "Aqara Smart Lock U200", desc: "Умный дверной замок, Сканер отпечатков, Гарантия 12 мес.", price: 189, emoji: "🔒", category: "hardware" },
-    { id: 27, title: "Ecobee Smart Thermostat Premium", desc: "Умный термостат, Встроенная Alexa, Гарантия 24 мес.", price: 249, emoji: "🌡️", category: "hardware" },
-
-    // A5. Носимые устройства
-    { id: 28, title: "Apple Watch Ultra 3", desc: "Титановый корпус, Время работы до 72 часов, Гарантия 12 мес.", price: 799, emoji: "⌚", category: "hardware" },
-    { id: 29, title: "Samsung Galaxy Watch 7", desc: "Мониторинг здоровья, Сенсорный AMOLED, Гарантия 12 мес.", price: 299, emoji: "🏃", category: "hardware" },
-    { id: 30, title: "Garmin Fenix 8 Solar", desc: "Премиум GPS-часы, Солнечная батарея, Гарантия 24 мес.", price: 899, emoji: "🏔️", category: "hardware" },
-    { id: 31, title: "Oura Ring Gen 4", desc: "Стильное умное кольцо, Анализ фаз сна, Гарантия 12 мес.", price: 349, emoji: "💍", category: "hardware" },
-    { id: 32, title: "Meta Ray-Ban Smart Glasses", desc: "Умные очки с камерой, Динамиками и ИИ, Гарантия 12 мес.", price: 299, emoji: "🕶️", category: "hardware" },
-
-    // A6. Аксессуары
-    { id: 33, title: "Logitech MX Master 3S", desc: "Эргономичная мышь, Бесшумные клики, Гарантия 12 мес.", price: 99, emoji: "🖱️", category: "hardware" },
-    { id: 34, title: "Keychron Q1 Pro", desc: "Металлическая механическая клавиатура, Гарантия 12 мес.", price: 199, emoji: "⌨️", category: "hardware" },
-    { id: 35, title: "Samsung T9 Portable SSD 2TB", desc: "Портативный сверхбыстрый внешний диск, Гарантия 36 мес.", price: 179, emoji: "💾", category: "hardware" },
-    { id: 36, title: "Anker 737 Power Bank 24k", desc: "Внешний аккумулятор 140W, Дисплей, Гарантия 18 мес.", price: 109, emoji: "🔋", category: "hardware" },
-    { id: 37, title: "Belkin 3-in-1 MagSafe Charger", desc: "Беспроводная зарядка Apple Watch/iPhone, Гарантия 12 мес.", price: 149, emoji: "🔌", category: "hardware" },
-    { id: 38, title: "Elgato Stream Deck MK.2", desc: "Контроллер для стримеров, 15 ЖК-клавиш, Гарантия 12 мес.", price: 149, emoji: "📽️", category: "hardware" },
-    { id: 39, title: "CalDigit TS4 Thunderbolt Dock", desc: "18 портов, Питание до 98W, Гарантия 24 мес.", price: 379, emoji: "⛽", category: "hardware" },
-
-    // A7. Дроны и камеры
-    { id: 40, title: "DJI Air 3S", desc: "Дрон с двойной камерой, Сенсор 1\", Гарантия 12 мес.", price: 1099, emoji: "🛸", category: "hardware" },
-    { id: 41, title: "DJI Mini 4 Pro", desc: "Легкий дрон до 249г, Съемка 4K HDR, Гарантия 12 мес.", price: 759, emoji: "🚁", category: "hardware" },
-    { id: 42, title: "GoPro HERO 13 Black", desc: "Экшн-камера, Улучшенный стабилизатор, Гарантия 12 мес.", price: 399, emoji: "📷", category: "hardware" },
-    { id: 43, title: "Sony ZV-E10 II", desc: "Камера со сменной оптикой для влогов, Гарантия 12 мес.", price: 899, emoji: "🎥", category: "hardware" },
-    { id: 44, title: "Insta360 X4", desc: "Экшн-камера 360 градусов, Запись 8K, Гарантия 12 мес.", price: 499, emoji: "👁️", category: "hardware" },
-
-    // --- КАТЕГОРИЯ B: ЦИФРОВЫЕ ПРОДУКТЫ (software) ---
-    // B1. Лицензии ПО
-    { id: 45, title: "Microsoft 365 Personal (1 год)", desc: "Оригинальный офисный пакет на 1 год для 1 ПК/Mac", price: 69, emoji: "🔑", category: "software" },
-    { id: 46, title: "Microsoft 365 Family (1 год)", desc: "Подписка для семьи, до 6 пользователей на 1 год", price: 99, emoji: "👥", category: "software" },
-    { id: 47, title: "Adobe Creative Cloud (1 год)", desc: "Лицензия на все приложения Creative Cloud на год", price: 599, emoji: "🎨", category: "software" },
-    { id: 48, title: "JetBrains All Products (1 год)", desc: "Пакет лучших IDE для разработчиков на год", price: 249, emoji: "☕", category: "software" },
-    { id: 49, title: "Notion Plus (1 год)", desc: "Годовая подписка на Notion Plus для продуктивности", price: 96, emoji: "📓", category: "software" },
-    { id: 50, title: "1Password Personal (1 год)", desc: "Лицензия на менеджер паролей №1 в мире на год", price: 36, emoji: "🔐", category: "software" },
-    { id: 51, title: "NordVPN Complete (2 года)", desc: "Премиум VPN-сервис, Защита от угроз, 2 года подписки", price: 99, emoji: "🛡️", category: "software" },
-
-    // B2. Облака и хостинг
-    { id: 52, title: "Nico Cloud Starter (50GB)", desc: "Персональное облачное хранилище, Бэкапы, Месячная подписка", price: 5, emoji: "☁️", category: "software" },
-    { id: 53, title: "Nico Cloud Pro (500GB)", desc: "Облако для профи, Приоритетная поддержка, Месячная подписка", price: 13, emoji: "⛈️", category: "software" },
-    { id: 54, title: "Nico Cloud Business (2TB)", desc: "Командный доступ, Личный менеджер, Месячная подписка", price: 30, emoji: "🏢", category: "software" },
-    { id: 55, title: "VPS Nico Lite", desc: "Виртуальный сервер: 2 vCPU, 4GB RAM, 80GB SSD, В месяц", price: 10, emoji: "🔌", category: "software" },
-    { id: 56, title: "VPS Nico Power", desc: "Мощный сервер: 4 vCPU, 16GB RAM, 200GB NVMe, В месяц", price: 30, emoji: "🏎️", category: "software" },
-    { id: 57, title: "Managed WordPress Hosting", desc: "Готовый быстрый хостинг под WordPress, В месяц", price: 8, emoji: "🌸", category: "software" },
-
-    // B3. Обучение
-    { id: 58, title: "Курс 'Python с нуля до Junior'", desc: "60 часов видеолекций, Практические ДЗ, Сертификат", price: 49, emoji: "🐍", category: "software" },
-    { id: 59, title: "Курс 'Fullstack Web Dev'", desc: "120 часов обучения (HTML/CSS/React/Node.js), Сертификат", price: 99, emoji: "🕸️", category: "software" },
-    { id: 60, title: "Курс 'AI & Machine Learning'", desc: "Практическое обучение ML, Создание нейросетей, 80 часов", price: 79, emoji: "🧠", category: "software" },
-    { id: 61, title: "Курс 'Кибербезопасность'", desc: "От основ ИБ до тестирования на проникновение, 90 часов", price: 89, emoji: "🚔", category: "software" },
-    { id: 62, title: "Курс 'UI/UX Дизайн Figma'", desc: "Создание интерфейсов, Figma Masterclass, 40 часов", price: 39, emoji: "📐", category: "software" },
-    { id: 63, title: "Academy All Access Pass", desc: "Годовой безлимитный доступ ко всем курсам Nico Academy", price: 199, emoji: "🎫", category: "software" },
-
-    // B4. Развлечения
-    { id: 64, title: "Xbox Game Pass Ultimate", desc: "Подписка на 1 месяц, Доступ к сотням игр на ПК/Консоли", price: 15, emoji: "💚", category: "software" },
-    { id: 65, title: "PlayStation Plus Premium", desc: "Подписка на 3 месяца, Каталог классики и онлайн", price: 50, emoji: "💙", category: "software" },
-    { id: 66, title: "Nintendo eShop Card $50", desc: "Карта пополнения баланса Nintendo eShop на $50", price: 50, emoji: "❤️", category: "software" },
-
-    // --- КАТЕГОРИЯ C: IT-УСЛУГИ (services) ---
-    // C1. Разработка
-    { id: 67, title: "Создание Telegram-бота", desc: "Разработка ботов любой сложности (включая AI и RAG)", price: 300, emoji: "🤖", category: "services" },
-    { id: 68, title: "Разработка лендинга", desc: "Эксклюзивный дизайн + верстка + запуск под ключ", price: 500, emoji: "🎨", category: "services" },
-    { id: 69, title: "Разработка веб-приложения", desc: "Сложное приложение под ваши задачи на React/Next.js", price: 2000, emoji: "🌐", category: "services" },
-    { id: 70, title: "Разработка мобильного приложения", desc: "Кроссплатформенное приложение на React Native", price: 5000, emoji: "📲", category: "services" },
-    { id: 71, title: "Интеграция AI в бизнес", desc: "Внедрение нейросетевых ассистентов в ваши процессы", price: 1500, emoji: "🦾", category: "services" },
-
-    // C2. Техподдержка
-    { id: 72, title: "Разовая консультация IT (1ч)", desc: "Решение технических проблем с инженером в живом звонке", price: 50, emoji: "🛠️", category: "services" },
-    { id: 73, title: "Tech Support Monthly", desc: "Пакет администрирования (до 10 часов поддержки в месяц)", price: 299, emoji: "🧰", category: "services" },
-    { id: 74, title: "Аудит IT-инфраструктуры", desc: "Комплексный анализ ваших серверов, кода и архитектуры", price: 500, emoji: "📋", category: "services" },
-    { id: 75, title: "Настройка облака и серверов", desc: "Развертывание Linux-серверов, Docker, облаков AWS/GCP", price: 200, emoji: "🏗️", category: "services" },
-    { id: 76, title: "Миграция данных и систем", desc: "Безопасный перенос баз данных и сайтов на новые хостинги", price: 300, emoji: "🚚", category: "services" },
-
-    // C3. Безопасность
-    { id: 77, title: "Аудит веб-безопасности", desc: "Проверка на уязвимости OWASP Top 10, Поиск брешей", price: 800, emoji: "🦺", category: "services" },
-    { id: 78, title: "Пентест под ключ", desc: "Имитация хакерской атаки на вашу инфраструктуру", price: 2000, emoji: "🏴‍☠️", category: "services" },
-    { id: 79, title: "Настройка корп. VPN", desc: "Развертывание защищенного WireGuard/OpenVPN сервера", price: 300, emoji: "🧗", category: "services" },
-    { id: 80, title: "Мониторинг угроз (Nico Shield)", desc: "Подписка на систему безопасности и мониторинга, В месяц", price: 50, emoji: "💎", category: "services" },
-
-    // C4. Дизайн
-    { id: 81, title: "Дизайн логотипа", desc: "3 концепта, Индивидуальный дизайн, Исходники", price: 150, emoji: "✒️", category: "services" },
-    { id: 82, title: "Разработка фирменного стиля", desc: "Логотип + брендбук + дизайн мерча/визиток под ключ", price: 500, emoji: "🎴", category: "services" },
-    { id: 83, title: "UI/UX дизайн приложения", desc: "Интерактивный макет в Figma до 15 экранов под ключ", price: 1200, emoji: "📐", category: "services" },
-    { id: 84, title: "Дизайн презентации", desc: "Качественная бизнес-презентация до 20 слайдов", price: 200, emoji: "📊", category: "services" }
-];
+async function loadCatalog() {
+    try {
+        const response = await fetch('products.json');
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        PRODUCTS = await response.json();
+        console.log(`✅ Каталог загружен: ${PRODUCTS.length} товаров`);
+        renderProducts("hardware");
+    } catch (error) {
+        console.error("❌ Ошибка загрузки каталога:", error);
+        // Показываем сообщение об ошибке пользователю
+        const catalogContainer = document.getElementById('catalog-container');
+        if (catalogContainer) {
+            catalogContainer.innerHTML = `
+                <div style="grid-column: span 2; text-align: center; padding: 40px 20px; color: var(--text-muted);">
+                    <div style="font-size: 2.5rem; margin-bottom: 10px;">⚠️</div>
+                    <h3>Каталог временно недоступен</h3>
+                    <p style="font-size: 0.85rem; margin-top: 5px;">Пожалуйста, попробуйте позже</p>
+                </div>
+            `;
+        }
+    }
+}
 
 // Локальное состояние корзины
 let cart = {};
@@ -758,5 +664,5 @@ checkoutBtn.addEventListener('click', (e) => {
     openCartModal();
 });
 
-// Первоначальный запуск отрисовки
-renderProducts("hardware");
+// Первоначальная загрузка каталога и отрисовка
+loadCatalog();
