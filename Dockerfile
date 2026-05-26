@@ -1,24 +1,43 @@
-# Используем официальный образ Python
-FROM python:3.10-slim
+# === Stage 1: Builder — установка зависимостей ===
+FROM python:3.10-slim AS builder
 
-# Устанавливаем рабочую директорию
+WORKDIR /build
+
+# Системные зависимости для сборки
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY requirements.txt .
+RUN pip install --no-cache-dir --prefix=/install -r requirements.txt
+
+
+# === Stage 2: Runtime — финальный образ ===
+FROM python:3.10-slim AS runtime
+
 WORKDIR /app
 
-# Копируем файл зависимостей (отдельным слоем для кеширования)
-COPY requirements.txt .
+# Копируем установленные пакеты из builder
+COPY --from=builder /install /usr/local
 
-# Устанавливаем зависимости
-RUN pip install --no-cache-dir -r requirements.txt
+# Создаём непривилегированного пользователя
+RUN useradd -m -s /bin/bash botuser
 
-# Копируем проект (.dockerignore исключает секреты и ненужное)
+# Копируем проект (.dockerignore исключает секреты)
 COPY . .
 
-# Создаем папки для данных
-RUN mkdir -p data/db logs
+# Создаём директории для данных
+RUN mkdir -p data/db logs && chown -R botuser:botuser /app
 
-# Запуск от непривилегированного пользователя (безопасность)
-RUN useradd -m botuser && chown -R botuser:botuser /app
+# Переключаемся на непривилегированного пользователя
 USER botuser
 
-# Команда запуска
+# Метаданные
+LABEL maintainer="Nico Market <support@nicomarket.fj>"
+LABEL description="AI Support Bot — Telegram RAG assistant"
+
+# Healthcheck
+HEALTHCHECK --interval=30s --timeout=10s --retries=3 --start-period=30s \
+    CMD python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/health', timeout=5)"
+
 CMD ["python", "main.py"]
