@@ -1,16 +1,10 @@
 import re
 import logging
 
-# Факты, которые бот НЕ ДОЛЖЕН выдумывать — проверяем на соответствие базе
-KNOWN_CONTACTS = {
-    "phone": "+679 764-2658",
-    "email_support": "support@nicomarket.fj",
-    "email_partners": "partners@nicomarket.fj",
-    "email_press": "press@nicomarket.fj",
-    "site": "https://nicomarket.fj",
-    "telegram": "@NicoMarketOfficial",
-    "instagram": "@nicomarket.fj",
-}
+# Контактные данные загружаются из централизованного конфига
+from config import settings
+
+KNOWN_CONTACTS = settings.known_contacts
 
 # Паттерны потенциальных галлюцинаций
 HALLUCINATION_PATTERNS = [
@@ -61,7 +55,8 @@ def validate_response(answer: str) -> tuple[str, list[str]]:
     # Проверка: если упомянут телефон, он должен быть из разрешенного списка
     # \d гарантирует, что номер заканчивается цифрой (не открытой скобкой типа "(08")
     phone_matches = re.findall(r"\+[\d\s()-]{6,16}\d", cleaned)
-    allowed_normalized_phones = ["+6797642658"]
+    # Нормализуем телефон из конфига для сравнения
+    allowed_normalized_phones = [re.sub(r"[\s()-]", "", settings.SUPPORT_PHONE)]
     
     for phone in phone_matches:
         normalized = re.sub(r"[\s()-]", "", phone)
@@ -71,7 +66,7 @@ def validate_response(answer: str) -> tuple[str, list[str]]:
     
     # Проверка: если упомянут email, он должен быть из KNOWN_CONTACTS
     email_matches = re.findall(r"[\w.-]+@[\w.-]+\.\w+", cleaned)
-    known_emails = {v for k, v in KNOWN_CONTACTS.items() if "email" in k}
+    known_emails = settings.known_emails
     for email in email_matches:
         if email not in known_emails:
             warnings.append(f"Неизвестный email: {email}")

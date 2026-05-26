@@ -6,6 +6,7 @@ from aiogram.filters import CommandStart, Command
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 from aiogram.types import ReplyKeyboardMarkup, KeyboardButton, WebAppInfo
 import config
+from config import settings
 from rag.retriever import search
 from rag.chain import generate_answer_stream
 import bot.memory
@@ -132,11 +133,11 @@ async def handle_callbacks(callback: types.CallbackQuery):
         await callback.message.answer("🔄 Стандартный срок возврата составляет 14 дней при сохранении товарного вида. Какой товар Вы хотели бы вернуть?")
     elif callback.data == "contact_manager":
         await callback.message.answer(
-            "📞 **Служба поддержки Nico Market**\n\n"
-            "Живой специалист на связи ежедневно:\n"
-            "• **Телефон:** `+679 764-2658`\n"
-            "• **Часы работы:** 08:00–22:00 (FJT / UTC+12)\n\n"
-            "Вы также можете продолжить диалог со мной — я к Вашим услугам.",
+            f"📞 **Служба поддержки {settings.COMPANY_NAME}**\n\n"
+            f"Живой специалист на связи ежедневно:\n"
+            f"• **Телефон:** `{settings.SUPPORT_PHONE}`\n"
+            f"• **Часы работы:** {settings.SUPPORT_HOURS}\n\n"
+            f"Вы также можете продолжить диалог со мной — я к Вашим услугам.",
             parse_mode="Markdown"
         )
     await callback.answer()
@@ -162,9 +163,9 @@ async def handle_web_app_data(message: types.Message):
             
         receipt += f"\n💵 **Итого к оплате: ${total}**\n\n"
         receipt += (
-            "Благодарим за выбор Nico Market! Менеджер свяжется с Вами для подтверждения и уточнения деталей доставки.\n\n"
-            "📞 +679 764-2658 (08:00–22:00)\n"
-            "📧 support@nicomarket.fj"
+            f"Благодарим за выбор {settings.COMPANY_NAME}! Менеджер свяжется с Вами для подтверждения и уточнения деталей доставки.\n\n"
+            f"📞 {settings.SUPPORT_PHONE} ({settings.SUPPORT_HOURS})\n"
+            f"📧 {settings.SUPPORT_EMAIL}"
         )
         
         await message.answer(receipt, parse_mode="Markdown", reply_markup=await get_reply_keyboard(message.from_user.id, message.from_user.first_name))
@@ -175,7 +176,7 @@ async def handle_web_app_data(message: types.Message):
         await bot.memory.memory.add_message(message.from_user.id, "assistant", receipt)
     except Exception as e:
         logging.error(f"Ошибка парсинга данных MiniApp: {e}")
-        await message.answer("⚠️ При обработке заказа произошёл сбой. Пожалуйста, повторите попытку или обратитесь к менеджеру: +679 764-2658.", reply_markup=await get_reply_keyboard(message.from_user.id, message.from_user.first_name))
+        await message.answer(f"⚠️ При обработке заказа произошёл сбой. Пожалуйста, повторите попытку или обратитесь к менеджеру: {settings.SUPPORT_PHONE}.", reply_markup=await get_reply_keyboard(message.from_user.id, message.from_user.first_name))
 
 
 @router.message()
@@ -234,8 +235,8 @@ async def handle_message(message: types.Message):
                 fallback_answer = (
                     "К сожалению, данный вопрос выходит за пределы имеющейся у меня информации. "
                     "Рекомендую обратиться к менеджеру — он сможет предоставить исчерпывающую консультацию.\n\n"
-                    "📞 +679 764-2658 (08:00–22:00)\n"
-                    "📧 support@nicomarket.fj"
+                    f"📞 {settings.SUPPORT_PHONE} ({settings.SUPPORT_HOURS})\n"
+                    f"📧 {settings.SUPPORT_EMAIL}"
                 )
                 await processing_msg.edit_text(fallback_answer)
                 await bot.memory.memory.add_message(user_id, "user", message.text)
@@ -271,7 +272,7 @@ async def handle_message(message: types.Message):
                     validated_answer = (
                         "Прошу прощения — в данном случае я не могу гарантировать полную точность ответа. "
                         "Чтобы Вы получили достоверную информацию, рекомендую связаться с менеджером.\n\n"
-                        "📞 +679 764-2658\n📧 support@nicomarket.fj"
+                        f"📞 {settings.SUPPORT_PHONE}\n📧 {settings.SUPPORT_EMAIL}"
                     )
             
             await processing_msg.edit_text(validated_answer)
@@ -289,11 +290,11 @@ async def handle_message(message: types.Message):
             await bot.memory.memory.add_message(user_id, "assistant", validated_answer)
         else:
             await processing_msg.edit_text(
-                "К сожалению, мне не удалось сформировать корректный ответ. Попробуйте переформулировать запрос или свяжитесь с менеджером: +679 764-2658."
+                f"К сожалению, мне не удалось сформировать корректный ответ. Попробуйте переформулировать запрос или свяжитесь с менеджером: {settings.SUPPORT_PHONE}."
             )
 
     except Exception as e:
         logging.error(f"Ошибка при обработке сообщения: {e}")
         await processing_msg.edit_text(
-            "⚠️ Произошёл технический сбой. Пожалуйста, повторите запрос чуть позже. Если ситуация повторится — свяжитесь с поддержкой: +679 764-2658."
+            f"⚠️ Произошёл технический сбой. Пожалуйста, повторите запрос чуть позже. Если ситуация повторится — свяжитесь с поддержкой: {settings.SUPPORT_PHONE}."
         )
