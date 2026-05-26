@@ -232,6 +232,17 @@ Currently covers guardrails validation (hallucinated phones, emails, URLs, promp
 | `/start` | Welcome message + main menu + WebApp button |
 | `/help` | Usage guide |
 | `/new` | Reset conversation context |
+| `/privacy` | Privacy Policy summary |
+
+**Admin Commands (Requires ID in `ADMIN_USER_IDS`):**
+| Command | Description |
+|---------|-------------|
+| `/admin` | Show admin panel |
+| `/stats` | View order and revenue statistics |
+| `/orders` | View latest 10 orders |
+| `/reload_kb`| Hot-reload knowledge base from txt files |
+| `/health_check`| View system health |
+| `/sessions`| View active user sessions |
 
 Inline buttons: **Order status**, **Return policy**, **Contact manager**.
 
