@@ -8,3 +8,4 @@ pydantic-settings==2.2.1
 redis
 arq==0.26.0
 langchain-text-splitters
+openai>=1.30.0

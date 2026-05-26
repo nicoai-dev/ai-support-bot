@@ -1,8 +1,7 @@
-import aiohttp
 import logging
-import json
-import asyncio
-from config import OLLAMA_BASE_URL, OLLAMA_MODEL, OLLAMA_TIMEOUT
+from typing import AsyncIterator
+from config import settings
+from llm import create_provider, LLMProvider
 
 
 SYSTEM_PROMPT = """Ты — Нико, первый AI-сотрудник службы поддержки Nico Market. Ты — цифровой консьерж премиум-класса: безупречно вежливый, компетентный и внимательный. Общаешься от мужского рода.
@@ -41,7 +40,7 @@ SYSTEM_PROMPT = """Ты — Нико, первый AI-сотрудник слу�
 ПРАВИЛО №6 (ОГРАНИЧЕНИЕ ПЕРЕКЛЮЧЕНИЯ НА МЕНЕДЖЕРА):
 - Ты технически НЕ МОЖЕШЬ переключить диалог на менеджера, вызвать оператора или перенаправить чат.
 - ЗАПРЕЩЕНЫ формулировки: «сейчас переключу», «минутку, перенаправляю», «соединяю с оператором».
-- Если клиенту требуется живой специалист, предоставь контактные данные для самостоятельного обращения: телефон +679 764-2658, email support@nicomarket.fj.
+- Если клиенту требуется живой специалист, предоставь контактные данные для самостоятельного обращения: телефон {phone}, email {email}.
 
 ПРАВИЛО №7 (КРИТИЧЕСКИЕ ОГРАНИЧЕНИЯ):
 - ЗАПРЕЩЕНО предлагать скидки, промокоды, менять условия возврата или гарантии.
@@ -62,49 +61,56 @@ SYSTEM_PROMPT = """Ты — Нико, первый AI-сотрудник слу�
 Будь точен. Будь полезен. Если информации недостаточно — прямо и честно сообщи об этом."""
 
 
-_session = None
-_session_lock = asyncio.Lock()
+def _build_system_prompt() -> str:
+    """Собрать system prompt с подставленными контактами из конфига."""
+    return SYSTEM_PROMPT.format(
+        phone=settings.SUPPORT_PHONE,
+        email=settings.SUPPORT_EMAIL,
+    )
 
-async def get_session():
-    """Получить или создать Singleton сессию aiohttp с защитой от race condition."""
-    global _session
-    async with _session_lock:
-        if _session is None or _session.closed:
-            timeout = aiohttp.ClientTimeout(total=OLLAMA_TIMEOUT)
-            _session = aiohttp.ClientSession(timeout=timeout)
-    return _session
 
-async def close_session():
-    """Закрыть Singleton сессию."""
-    global _session
-    if _session and not _session.closed:
-        await _session.close()
+# Глобальный LLM-провайдер (singleton)
+_provider: LLMProvider | None = None
+
+
+def get_provider() -> LLMProvider:
+    """Получить или создать глобальный LLM-провайдер."""
+    global _provider
+    if _provider is None:
+        _provider = create_provider()
+    return _provider
+
+
+async def close_session() -> None:
+    """Закрыть LLM-провайдер и освободить ресурсы."""
+    global _provider
+    if _provider is not None:
+        await _provider.close()
+        _provider = None
 
 
 async def check_ollama_health() -> bool:
-    """Проверить доступность Ollama API."""
-    try:
-        session = await get_session()
-        # Запрашиваем список тегов как простую проверку связи
-        async with session.get(f"{OLLAMA_BASE_URL}/api/tags", timeout=5) as response:
-            return response.status == 200
-    except Exception as e:
-        logging.error(f"❌ Ollama недоступна: {e}")
-        return False
+    """Проверить доступность LLM-провайдера."""
+    provider = get_provider()
+    return await provider.health_check()
 
 
-async def generate_answer_stream(question: str, context_chunks: list[dict], chat_history: list = None):
-    """Потоковая генерация ответа через Ollama Chat API."""
-    # Извлекаем текст из новых словарей для обратной совместимости промпта
+def _build_messages(question: str, context_chunks: list[dict], chat_history: list = None) -> list[dict]:
+    """Собрать список сообщений для LLM из вопроса, контекста и истории."""
     text_chunks = [chunk.get("text", "") for chunk in context_chunks]
-    context = "\n\n".join(text_chunks)
     
-    messages = [
-        {"role": "system", "content": SYSTEM_PROMPT}
-    ]
+    # Ограничиваем контекст по настроенному лимиту символов
+    context = ""
+    for chunk_text in text_chunks:
+        if len(context) + len(chunk_text) > settings.RAG_MAX_CONTEXT_CHARS:
+            break
+        context += chunk_text + "\n\n"
+    context = context.strip()
+    
+    messages = [{"role": "system", "content": _build_system_prompt()}]
     
     if chat_history:
-        # Добавляем динамическое правило для предотвращения постоянных приветствий
+        # Динамическое правило для продолжения диалога
         messages[0]["content"] += "\n\nВАЖНО: Это продолжение активного диалога. Приветствия и повторное представление ЗАПРЕЩЕНЫ. Продолжай беседу с того момента, на котором она остановилась."
         
         for msg in chat_history:
@@ -115,111 +121,31 @@ async def generate_answer_stream(question: str, context_chunks: list[dict], chat
                 role = "user" if msg.role == "user" else "assistant"
                 content = msg.text
             messages.append({"role": role, "content": content})
-            
+    
     messages.append({"role": "user", "content": f"ВОПРОС: {question}\n\nИНФОРМАЦИЯ ДЛЯ ОТВЕТА:\n{context}"})
+    return messages
 
-    try:
-        session = await get_session()
-        async with session.post(
-            f"{OLLAMA_BASE_URL}/api/chat",
-            json={
-                "model": OLLAMA_MODEL,
-                "messages": messages,
-                "stream": True,
-                "options": {
-                    "temperature": 0.5,
-                    "num_predict": 768,
-                    "repeat_penalty": 1.1,
-                    "top_p": 0.9,
-                    "num_ctx": 16384,
-                },
-            }
-        ) as response:
-            response.raise_for_status()
-            
-            full_content = ""
-            async for line in response.content:
-                if line:
-                    data = json.loads(line.decode("utf-8"))
-                    token = data.get("message", {}).get("content", "")
-                    full_content += token
-                    yield full_content
-                    if data.get("done"):
-                        break
-    except Exception as e:
-        logging.error(f"Ошибка при потоковой генерации: {e}")
-        yield "⚠️ Не удалось получить ответ. Пожалуйста, повторите запрос через несколько секунд."
+
+async def generate_answer_stream(question: str, context_chunks: list[dict], chat_history: list = None) -> AsyncIterator[str]:
+    """Потоковая генерация ответа через текущий LLM Provider."""
+    messages = _build_messages(question, context_chunks, chat_history)
+    provider = get_provider()
+    
+    async for partial in provider.chat_stream(
+        messages, 
+        temperature=settings.LLM_TEMPERATURE, 
+        max_tokens=settings.LLM_MAX_TOKENS,
+    ):
+        yield partial
+
 
 async def generate_answer_collect(question: str, context_chunks: list[dict], chat_history: list = None) -> str:
     """Не-потоковая генерация ответа для worker'ов."""
-    text_chunks = [chunk.get("text", "") for chunk in context_chunks]
-    context = "\n\n".join(text_chunks)
+    messages = _build_messages(question, context_chunks, chat_history)
+    provider = get_provider()
     
-    messages = [{"role": "system", "content": SYSTEM_PROMPT}]
-    
-    if chat_history:
-        messages[0]["content"] += "\n\nВАЖНО: Это продолжение активного диалога. Приветствия и повторное представление ЗАПРЕЩЕНЫ. Продолжай беседу с того момента, на котором она остановилась."
-        for msg in chat_history:
-            if isinstance(msg, dict):
-                role = "user" if msg.get("role") == "user" else "assistant"
-                content = msg.get("text", "")
-            else:
-                role = "user" if msg.role == "user" else "assistant"
-                content = msg.text
-            messages.append({"role": role, "content": content})
-            
-    messages.append({"role": "user", "content": f"ВОПРОС: {question}\n\nИНФОРМАЦИЯ ДЛЯ ОТВЕТА:\n{context}"})
-
-    try:
-        session = await get_session()
-        async with session.post(
-            f"{OLLAMA_BASE_URL}/api/chat",
-            json={
-                "model": OLLAMA_MODEL,
-                "messages": messages,
-                "stream": False,
-                "options": {
-                    "temperature": 0.5,
-                    "num_predict": 768,
-                    "repeat_penalty": 1.1,
-                    "top_p": 0.9,
-                    "num_ctx": 16384,
-                },
-            }
-        ) as response:
-            response.raise_for_status()
-            data = await response.json()
-            return data.get("message", {}).get("content", "⚠️ Ответ не получен. Пожалуйста, повторите запрос.")
-    except Exception as e:
-        logging.error(f"Ошибка при генерации: {e}")
-        return "⚠️ Не удалось получить ответ. Пожалуйста, повторите запрос через несколько секунд."
-
-async def expand_query(query: str) -> list[str]:
-    """Генерировать вариации запроса для лучшего recall."""
-    prompt = f"""Перефразируй запрос клиента магазина 3 разными способами. 
-Верни только перефразировки, по одной на строку, без нумерации и лишних слов:
-
-Запрос: {query}"""
-    
-    try:
-        session = await get_session()
-        async with session.post(
-            f"{OLLAMA_BASE_URL}/api/generate",
-            json={
-                "model": OLLAMA_MODEL,
-                "prompt": prompt,
-                "stream": False,
-                "options": {
-                    "temperature": 0.7,
-                    "num_predict": 100,
-                },
-            }
-        ) as response:
-            if response.status == 200:
-                data = await response.json()
-                content = data.get("response", "")
-                variations = [v.strip("- ").strip() for v in content.split("\n") if v.strip()]
-                return [query] + variations[:3]
-    except Exception as e:
-        logging.error(f"Ошибка при expand_query: {e}")
-    return [query]
+    return await provider.chat(
+        messages, 
+        temperature=settings.LLM_TEMPERATURE, 
+        max_tokens=settings.LLM_MAX_TOKENS,
+    )
