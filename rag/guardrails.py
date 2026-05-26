@@ -6,14 +6,19 @@ from config import settings
 
 KNOWN_CONTACTS = settings.known_contacts
 
-# Паттерны потенциальных галлюцинаций
+# Получаем домен из конфига для динамических regex
+_site_domain = settings.COMPANY_SITE.replace("https://", "").replace("http://", "").replace("/", "")
+_escaped_domain = re.escape(_site_domain)
+
 HALLUCINATION_PATTERNS = [
-    # Выдуманные URL
-    r"https?://(?!nicomarket\.fj)\S+",
-    # Выдуманные email
-    r"[\w.-]+@(?!nicomarket\.fj)\w+\.\w+",
+    # Выдуманные URL (кроме нашего домена)
+    rf"https?://(?!{_escaped_domain})\S+",
+    # Выдуманные email (кроме нашего домена)
+    rf"[\w.-]+@(?!{_escaped_domain})\w+\.\w+",
     # Упоминание «сайта» без конкретной ссылки из базы
-    r"(?:на нашем сайте|на сайте|проверьте на сайте|зайдите на сайт)(?!.*nicomarket\.fj)",
+    rf"(?:на нашем сайте|на сайте|проверьте на сайте|зайдите на сайт)(?!.*{_escaped_domain})",
+    # Выдуманные номера заказов (мы не генерируем номера)
+    r"(?:заказ|order)\s*#?\s*\d{5,}",
 ]
 
 LEAK_PATTERNS = [

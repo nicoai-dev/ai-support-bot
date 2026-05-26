@@ -171,3 +171,57 @@ async def search(query: str, top_k: int = 8, distance_threshold: float = 1.5) ->
         logging.info(f"🔍 Найден чанк [{chunk['source']}] (Hybrid + Rerank): {chunk['text'][:60]}...")
             
     return reranked
+
+
+async def reload_index():
+    """Горячая перезагрузка базы знаний без рестарта бота.
+    
+    Используется admin-командой /reload_kb.
+    Безопасно: новый индекс строится до замены старого.
+    """
+    global _all_chunks, _bm25_index
+    
+    logging.info("🔄 Горячая перезагрузка базы знаний...")
+    
+    # Загружаем и индексируем новые документы
+    docs = await asyncio.to_thread(load_documents, KNOWLEDGE_BASE_DIR)
+    if not docs:
+        logging.warning("⚠️ Нет документов для перезагрузки!")
+        return 0
+    
+    chunks = await asyncio.to_thread(split_into_chunks, docs)
+    model = get_embedding_model()
+    
+    texts = [c["text"] for c in chunks]
+    metadatas = [{"source": c["source"]} for c in chunks]
+    embeddings = await asyncio.to_thread(model.encode, texts, normalize_embeddings=True)
+    embeddings = embeddings.tolist()
+    
+    client = get_chroma_client()
+    
+    def _sync_reindex():
+        try:
+            client.delete_collection("knowledge_base")
+        except Exception:
+            pass
+        collection = client.create_collection(
+            name="knowledge_base",
+            metadata={"hnsw:space": "cosine"},
+        )
+        collection.add(
+            documents=texts,
+            metadatas=metadatas,
+            embeddings=embeddings,
+            ids=[f"chunk_{i}" for i in range(len(chunks))],
+        )
+    
+    await asyncio.to_thread(_sync_reindex)
+    
+    # Атомарно обновляем глобальные переменные
+    new_bm25 = BM25Index()
+    new_bm25.index(chunks)
+    _all_chunks = chunks
+    _bm25_index = new_bm25
+    
+    logging.info(f"✅ База знаний перезагружена! Чанков: {len(chunks)}")
+    return len(chunks)

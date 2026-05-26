@@ -1,9 +1,36 @@
 import math
-from collections import Counter, defaultdict
 import re
+import logging
+from collections import Counter, defaultdict
+
+# Опциональная лемматизация через pymorphy3
+try:
+    import pymorphy3
+    _morph = pymorphy3.MorphAnalyzer()
+    HAS_MORPH = True
+    logging.info("✅ pymorphy3 загружен — BM25 использует лемматизацию")
+except ImportError:
+    _morph = None
+    HAS_MORPH = False
+    logging.warning("⚠️ pymorphy3 не установлен — BM25 работает без лемматизации")
+
+
+# Стоп-слова для русского языка (частые, но неинформативные)
+_STOP_WORDS = frozenset({
+    "и", "в", "на", "с", "по", "для", "от", "к", "за", "из",
+    "не", "но", "а", "о", "об", "до", "при", "что", "как",
+    "это", "то", "он", "она", "они", "мы", "вы", "я",
+    "его", "её", "их", "мой", "наш", "ваш", "все", "всё",
+    "бы", "же", "ли", "ещё", "уже", "или", "ни", "так",
+    "чем", "где", "кто", "когда", "если", "есть", "был",
+    "будет", "были", "быть", "может", "можно", "нужно",
+    "более", "менее", "очень", "также", "только", "этот",
+    "эта", "эти", "тот", "та", "те", "свой", "себя",
+})
+
 
 class BM25Index:
-    """Лёгкий BM25 индекс без внешних зависимостей."""
+    """BM25 индекс с поддержкой русской морфологии."""
     
     def __init__(self, k1: float = 1.5, b: float = 0.75):
         self.k1 = k1
@@ -15,7 +42,27 @@ class BM25Index:
         self.tokenized: list[list[str]] = []
     
     def _tokenize(self, text: str) -> list[str]:
-        return re.findall(r'\w+', text.lower())
+        """Токенизация с лемматизацией и удалением стоп-слов."""
+        raw_tokens = re.findall(r'\w+', text.lower())
+        
+        tokens = []
+        for token in raw_tokens:
+            # Пропускаем стоп-слова и слишком короткие токены
+            if token in _STOP_WORDS or len(token) < 2:
+                continue
+            
+            # Лемматизация через pymorphy3
+            if HAS_MORPH and _morph is not None:
+                parsed = _morph.parse(token)
+                if parsed:
+                    lemma = parsed[0].normal_form
+                    tokens.append(lemma)
+                else:
+                    tokens.append(token)
+            else:
+                tokens.append(token)
+        
+        return tokens
     
     def index(self, documents: list[dict]) -> None:
         """Проиндексировать документы. Каждый doc = {"text": ..., "source": ...}"""
@@ -33,8 +80,10 @@ class BM25Index:
         """Вернуть [(doc_index, score), ...] отсортированные по score DESC."""
         query_tokens = self._tokenize(query)
         n = len(self.docs)
-        scores = []
+        if n == 0:
+            return []
         
+        scores = []
         for i, doc_tokens in enumerate(self.tokenized):
             score = 0
             tf_map = Counter(doc_tokens)
