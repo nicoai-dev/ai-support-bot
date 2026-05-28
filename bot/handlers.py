@@ -52,9 +52,6 @@ def verify_webapp_data(init_data: str, bot_token: str) -> bool:
 
 router = Router()
 
-from bot.middleware import RequestContextMiddleware
-router.message.middleware(RequestContextMiddleware())
-
 from arq import create_pool
 from arq.connections import RedisSettings
 
@@ -88,7 +85,8 @@ async def get_reply_keyboard(user_id: int = 0, first_name: str = "Гость", p
 
     # ВАЖНО: НЕ передаём user_id и photo_url через URL — это PII и потенциальная утечка.
     # WebApp получит user данные через Telegram.WebApp.initDataUnsafe.user
-    url = f"{webapp_url}?first_name={encoded_name}"
+    import time
+    url = f"{webapp_url}?first_name={encoded_name}&v={int(time.time())}"
     return ReplyKeyboardMarkup(
         keyboard=[
             [KeyboardButton(text="🛒 Каталог Nico Market", web_app=WebAppInfo(url=url))]
@@ -365,7 +363,8 @@ async def handle_message(message: types.Message, data: dict = None):
                     now = time.time()
                     if now - last_edit_time > 1.5:
                         try:
-                            await processing_msg.edit_text(partial_answer + " ▌")
+                            clean_partial = partial_answer.replace("**", "")
+                            await processing_msg.edit_text(clean_partial + " ▌")
                             last_edit_time = now
                         except Exception as edit_error:
                             logging.debug(f"Пропуск обновления стриминга: {edit_error}")
@@ -387,6 +386,7 @@ async def handle_message(message: types.Message, data: dict = None):
                         f"📞 {settings.SUPPORT_PHONE}\n📧 {settings.SUPPORT_EMAIL}"
                     )
             
+            validated_answer = validated_answer.replace("**", "")
             await processing_msg.edit_text(validated_answer)
             
             if warnings and len(warnings) < 3:

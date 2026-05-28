@@ -11,7 +11,7 @@
     <div id="app">
         <!-- Header -->
         <header class="app-header">
-            <button id="cart-icon-btn" class="cart-icon-btn" onclick="openCartModal()">
+            <button id="cart-icon-btn" class="cart-icon-btn">
                 🛒
                 <span id="cart-badge" class="cart-badge">0</span>
             </button>
@@ -70,11 +70,11 @@
             </div>
             <div class="modal-footer">
                 <div class="modal-quantity-controls" id="modal-quantity-controls">
-                    <button class="qty-btn minus" id="modal-qty-minus" onclick="adjustModalQty(-1)">-</button>
+                    <button class="qty-btn minus" id="modal-qty-minus">-</button>
                     <span class="qty-count" id="modal-qty-count">0</span>
-                    <button class="qty-btn plus" id="modal-qty-plus" onclick="adjustModalQty(1)">+</button>
+                    <button class="qty-btn plus" id="modal-qty-plus">+</button>
                 </div>
-                <button class="btn-checkout" id="modal-btn-action" onclick="handleModalAction()">Добавить в корзину</button>
+                <button class="btn-checkout" id="modal-btn-action">Добавить в корзину</button>
             </div>
         </div>
     </div>
@@ -96,12 +96,12 @@
                 </div>
             </div>
             <div class="modal-footer">
-                <button class="btn-checkout" id="cart-modal-btn-checkout" onclick="checkoutOrder()" style="width: 100%;">Оформить заказ</button>
+                <button class="btn-checkout" id="cart-modal-btn-checkout" style="width: 100%;">Оформить заказ</button>
             </div>
         </div>
     </div>
 
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
-    <script src="app.js?v=1.4.0"></script>
+    <script src="app.js?v=1.4.3"></script>
 </body>
 </html>

@@ -9,26 +9,17 @@ from config import settings, REDIS_URL
 
 async def startup(ctx):
     """Загружаем чанки и BM25-индекс в память воркера при старте."""
+    from main import setup_logging
+    setup_logging(level=settings.LOG_LEVEL)
+    
     logging.info("🚀 arq-worker: загружаем BM25-индекс в память...")
     await load_chunks_to_memory()
     logging.info("✅ arq-worker: BM25-индекс готов.")
 
 
 def _build_search_query(question: str, chat_history: list) -> str:
-    """Построить расширенный запрос для поиска с учётом истории диалога.
-    
-    Общая логика, используемая и в handlers.py, и в worker — 
-    вынесена сюда, чтобы не дублировать.
-    """
-    if not chat_history:
-        return question
-    context_queries = [
-        msg.get("text", "") 
-        for msg in chat_history[-4:] 
-        if msg.get("role") == "user"
-    ]
-    context_queries.append(question)
-    return " ".join(context_queries)
+    """Для RAG поиска используем только текущий вопрос, чтобы старый контекст не сбивал Reranker."""
+    return question
 
 
 async def process_question(ctx, user_id: int, question: str, chat_history: list):

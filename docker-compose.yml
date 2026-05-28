@@ -10,7 +10,7 @@ services:
       - ./data/knowledge_base:/app/data/knowledge_base:ro
       - ./data/chroma_db:/app/data/chroma_db
       - bot_logs:/app/logs
-      - hf_cache:/root/.cache/huggingface
+      - hf_cache:/home/botuser/.cache/huggingface
     env_file: .env
     environment:
       STORAGE_BACKEND: postgres
@@ -52,7 +52,7 @@ services:
     volumes:
       - redis_data:/data
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD:-changeme}", "--no-auth-warning", "ping"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -68,7 +68,7 @@ services:
     volumes:
       - ./data/knowledge_base:/app/data/knowledge_base:ro
       - ./data/chroma_db:/app/data/chroma_db
-      - hf_cache:/root/.cache/huggingface
+      - hf_cache:/home/botuser/.cache/huggingface
     env_file: .env
     environment:
       OLLAMA_BASE_URL: http://host.docker.internal:11434

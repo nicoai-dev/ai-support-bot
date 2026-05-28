@@ -43,7 +43,7 @@ function loadTelegramUser() {
     try {
         const urlParams = new URLSearchParams(window.location.search);
         const queryFirstName = urlParams.get('first_name');
-        const queryPhotoUrl = urlParams.get('photo_url') || (tg.initDataUnsafe && tg.initDataUnsafe.user && tg.initDataUnsafe.user.photo_url);
+        const queryPhotoUrl = (tg.initDataUnsafe && tg.initDataUnsafe.user && tg.initDataUnsafe.user.photo_url);
 
         // 1. Пытаемся взять данные стандартно из SDK
         if (tg.initDataUnsafe && tg.initDataUnsafe.user) {
@@ -160,14 +160,14 @@ function renderProducts(categoryFilter = "hardware", searchQuery = "") {
         const card = document.createElement('div');
         card.className = `product-card ${isInCart ? 'in-cart' : ''}`;
         card.innerHTML = `
-            <div class="product-card-clickable" onclick="openProductModal(${p.id})">
+            <div class="product-card-clickable" data-action="open-modal" data-id="${p.id}">
                 <div class="product-img">${p.emoji}</div>
                 <div class="product-title">${escapeHtml(p.title)}</div>
                 <div class="product-desc">${escapeHtml(p.desc)}</div>
             </div>
             <div class="product-footer">
                 <div class="product-price">$${escapeHtml(String(p.price))}</div>
-                <button class="btn-add" onclick="addToCart(${p.id}, event)">
+                <button class="btn-add" data-action="add-to-cart" data-id="${p.id}">
                     ${isInCart ? `+${countInCart}` : '+'}
                 </button>
             </div>
@@ -556,7 +556,7 @@ window.renderCartModalItems = function() {
         const row = document.createElement('div');
         row.className = 'cart-item-row';
         row.innerHTML = `
-            <div class="cart-item-info" onclick="openProductModal(${id})">
+            <div class="cart-item-info" data-action="open-modal" data-id="${id}">
                 <span class="cart-item-emoji">${product ? product.emoji : '📦'}</span>
                 <div class="cart-item-details">
                     <span class="cart-item-title">${escapeHtml(item.title)}</span>
@@ -565,11 +565,11 @@ window.renderCartModalItems = function() {
             </div>
             <div class="cart-item-actions">
                 <div class="cart-item-qty-controls" style="display: flex; align-items: center; background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.06); border-radius: 14px; padding: 2px;">
-                    <button class="cart-item-qty-btn" onclick="adjustCartItemQty(${id}, -1)" style="width:24px; height:24px; border-radius:50%; border:none; background:transparent; color:white; font-size:0.9rem; cursor:pointer;">-</button>
+                    <button class="cart-item-qty-btn" data-action="adjust-cart" data-id="${id}" data-change="-1" style="width:24px; height:24px; border-radius:50%; border:none; background:transparent; color:white; font-size:0.9rem; cursor:pointer;">-</button>
                     <span class="cart-item-qty-val" style="font-size:0.85rem; font-weight:700; min-width:18px; text-align:center;">${item.count}</span>
-                    <button class="cart-item-qty-btn" onclick="adjustCartItemQty(${id}, 1)" style="width:24px; height:24px; border-radius:50%; border:none; background:transparent; color:white; font-size:0.9rem; cursor:pointer;">+</button>
+                    <button class="cart-item-qty-btn" data-action="adjust-cart" data-id="${id}" data-change="1" style="width:24px; height:24px; border-radius:50%; border:none; background:transparent; color:white; font-size:0.9rem; cursor:pointer;">+</button>
                 </div>
-                <button class="cart-item-delete" onclick="removeCartItem(${id})" style="background:transparent; border:none; cursor:pointer; font-size:1.1rem; padding: 2px 4px; display:flex; align-items:center;">🗑️</button>
+                <button class="cart-item-delete" data-action="remove-cart" data-id="${id}" style="background:transparent; border:none; cursor:pointer; font-size:1.1rem; padding: 2px 4px; display:flex; align-items:center;">🗑️</button>
             </div>
         `;
         cartItemsContainer.appendChild(row);
@@ -642,17 +642,21 @@ window.removeCartItem = function(productId) {
 
 // Действие по кнопке «Оформить заказ» в модале корзины
 window.checkoutOrder = function() {
-    const orderData = {
-        items: cart,
-        total: Object.values(cart).reduce((sum, item) => sum + (item.price * item.count), 0),
-        timestamp: Date.now()
-    };
+    tg.showConfirm("Вы уверены, что хотите оформить заказ?", function(confirmed) {
+        if (confirmed) {
+            const orderData = {
+                items: cart,
+                total: Object.values(cart).reduce((sum, item) => sum + (item.price * item.count), 0),
+                timestamp: Date.now()
+            };
 
-    // Отправляем JSON-строку заказа обратно в бот
-    tg.sendData(JSON.stringify(orderData));
-    
-    // Закрываем Mini App
-    tg.close();
+            // Отправляем JSON-строку заказа обратно в бот
+            tg.sendData(JSON.stringify(orderData));
+            
+            // Закрываем Mini App
+            tg.close();
+        }
+    });
 };
 
 // Клик по плавающей корзине или кнопке заказа открывает модальное окно для проверки
@@ -663,6 +667,41 @@ checkoutBtn.addEventListener('click', (e) => {
     e.stopPropagation(); // предотвращаем всплытие клика к плавающему бару
     openCartModal();
 });
+
+// Глобальное делегирование событий (вместо onclick)
+document.addEventListener('click', (e) => {
+    const el = e.target.closest('[data-action]');
+    if (!el) return;
+    
+    const action = el.dataset.action;
+    const id = parseInt(el.dataset.id);
+    
+    if (action === 'open-modal') {
+        openProductModal(id);
+    } else if (action === 'add-to-cart') {
+        addToCart(id, e);
+    } else if (action === 'adjust-cart') {
+        adjustCartItemQty(id, parseInt(el.dataset.change));
+    } else if (action === 'remove-cart') {
+        removeCartItem(id);
+    }
+});
+
+// Обработчики статических кнопок
+const cartIconBtn = document.getElementById('cart-icon-btn');
+if (cartIconBtn) cartIconBtn.addEventListener('click', openCartModal);
+
+const modalQtyMinusEl = document.getElementById('modal-qty-minus');
+if (modalQtyMinusEl) modalQtyMinusEl.addEventListener('click', () => adjustModalQty(-1));
+
+const modalQtyPlusEl = document.getElementById('modal-qty-plus');
+if (modalQtyPlusEl) modalQtyPlusEl.addEventListener('click', () => adjustModalQty(1));
+
+const modalBtnActionEl = document.getElementById('modal-btn-action');
+if (modalBtnActionEl) modalBtnActionEl.addEventListener('click', handleModalAction);
+
+const cartModalBtnCheckoutEl = document.getElementById('cart-modal-btn-checkout');
+if (cartModalBtnCheckoutEl) cartModalBtnCheckoutEl.addEventListener('click', checkoutOrder);
 
 // Первоначальная загрузка каталога и отрисовка
 loadCatalog();

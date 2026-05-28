@@ -3,6 +3,7 @@ import time
 import logging
 from aiogram import BaseMiddleware
 from aiogram.types import Message, TelegramObject
+from typing import Any, Callable, Dict, Awaitable
 
 class RequestContextMiddleware(BaseMiddleware):
     """Middleware для добавления correlation ID к каждому запросу.
