@@ -59,5 +59,5 @@ class WorkerSettings:
     functions = [process_question]
     redis_settings = RedisSettings.from_dsn(REDIS_URL)
     max_jobs = 1
-    job_timeout = 300
+    job_timeout = 300 if settings.LLM_PROVIDER == "ollama" else 120
     health_check_interval = 30

@@ -325,7 +325,8 @@ async def handle_message(message: types.Message, data: dict = None):
                 question=message.text,
                 chat_history=history_dicts,
             )
-            result = await job.result(timeout=120)
+            job_timeout = 300 if settings.LLM_PROVIDER == "ollama" else 120
+            result = await job.result(timeout=job_timeout)
             if result:
                 full_answer = result["answer"]
             else:
