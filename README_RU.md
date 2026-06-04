@@ -7,9 +7,9 @@
 [![Ollama](https://img.shields.io/badge/LLM-Ollama-black.svg)](https://ollama.ai/)
 [![Docker](https://img.shields.io/badge/Docker-Ready-2496ED.svg?logo=docker&logoColor=white)](https://docker.com)
 
-Production-ready ИИ-ассистент для Telegram на архитектуре **RAG (Retrieval-Augmented Generation)**. Полностью локальная работа через **Ollama** — без облачных API, без абонентских расходов, с полной конфиденциальностью данных.
+Production-ready ИИ-ассистент для Telegram на архитектуре **RAG (Retrieval-Augmented Generation)**. Поддерживает как полностью локальную работу через **Ollama** (для максимальной конфиденциальности), так и интеграцию с облачными провайдерами (**OpenAI** и **Anthropic**).
 
-> **Коротко:** Telegram-бот, который отвечает на вопросы клиентов о магазине с помощью локальной LLM + векторного поиска по базе знаний. Стриминг ответов, многоуровневая защита от галлюцинаций, встроенный Mini App-магазин и оркестратор, который управляет ботом, веб-сервером и SSH-туннелем автоматически.
+> **Коротко:** Telegram-бот, который отвечает на вопросы клиентов о магазине с помощью локальной или облачной LLM + векторного поиска по базе знаний. Стриминг ответов, многоуровневая защита от галлюцинаций, встроенный Mini App-магазин и оркестратор, который управляет ботом, веб-сервером и SSH-туннелем автоматически.
 
 ---
 
@@ -109,7 +109,7 @@ ai-support-bot/
 | Слой | Технология |
 |------|-----------|
 | **Фреймворк бота** | `aiogram 3.x` (Python 3.10+) |
-| **LLM-движок** | `Ollama` (модель по умолчанию: `qwen2.5-coder:32b`) |
+| **LLM-движок** | Мультипровайдерный: `Ollama` (по умолчанию, e.g. `qwen2.5-coder:32b`), `OpenAI` (`gpt-4o-mini`), `Anthropic` (`claude-3-5-sonnet`) |
 | **Эмбеддинги** | `sentence-transformers` (`paraphrase-multilingual-MiniLM-L12-v2`) |
 | **Векторная БД** | `ChromaDB` (персистентная, косинусная метрика) |
 | **Лексический поиск**| Собственный `BM25Index` (ранжирование tf-idf) |
@@ -186,8 +186,13 @@ docker-compose up --build -d
 | Переменная | По умолчанию | Описание |
 |------------|-------------|----------|
 | `BOT_TOKEN` | — (обязательно) | Токен Telegram-бота от [@BotFather](https://t.me/BotFather) |
+| `LLM_PROVIDER` | `ollama` | Провайдер LLM: `ollama`, `openai` или `anthropic` |
 | `OLLAMA_BASE_URL` | `http://localhost:11434` | Эндпоинт Ollama API |
 | `OLLAMA_MODEL` | `qwen2.5-coder:32b` | Название модели LLM |
+| `OPENAI_API_KEY` | — | API-ключ OpenAI (требуется при `LLM_PROVIDER=openai`) |
+| `OPENAI_MODEL` | `gpt-4o-mini` | Название модели OpenAI |
+| `ANTHROPIC_API_KEY` | — | API-ключ Anthropic (требуется при `LLM_PROVIDER=anthropic`) |
+| `ANTHROPIC_MODEL` | `claude-sonnet-4-20250514` | Название модели Anthropic |
 | `WEBAPP_URL` | `https://nico-market-catalog.loca.lt` | Публичный URL WebApp (автоматически обновляется `run_all.py`) |
 | `STORAGE_BACKEND` | `memory` | Адаптер хранения сессий: `memory` (SQLite) или `postgres` |
 | `DATABASE_URL` | — | DSN строка подключения к PostgreSQL базе данных |

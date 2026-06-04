@@ -7,9 +7,9 @@
 [![Ollama](https://img.shields.io/badge/LLM-Ollama-black.svg)](https://ollama.ai/)
 [![Docker](https://img.shields.io/badge/Docker-Ready-2496ED.svg?logo=docker&logoColor=white)](https://docker.com)
 
-A production-ready AI support assistant for Telegram built on a **RAG (Retrieval-Augmented Generation)** architecture. Runs fully locally via **Ollama** — no cloud APIs, no recurring costs, complete data privacy.
+A production-ready AI support assistant for Telegram built on a **RAG (Retrieval-Augmented Generation)** architecture. Supports fully local execution via **Ollama** (for maximum data privacy) or cloud providers (**OpenAI** and **Anthropic**).
 
-> **TL;DR:** A Telegram bot that answers customer questions about a store using a local LLM + vector search over a knowledge base, with streaming responses, anti-hallucination guardrails, a built-in Mini App storefront, and a one-click orchestrator that manages the bot, web server, and SSH tunnel automatically.
+> **TL;DR:** A Telegram bot that answers customer questions about a store using a local or cloud LLM + vector search over a knowledge base, with streaming responses, anti-hallucination guardrails, a built-in Mini App storefront, and a one-click orchestrator that manages the bot, web server, and SSH tunnel automatically.
 
 ---
 
@@ -105,7 +105,7 @@ ai-support-bot/
 | Layer | Technology |
 |-------|-----------|
 | **Bot Framework** | `aiogram 3.x` (Python 3.10+) |
-| **LLM Engine** | `Ollama` (default model: `qwen2.5-coder:32b`) |
+| **LLM Engine** | Multi-Provider: `Ollama` (default, e.g. `qwen2.5-coder:32b`), `OpenAI` (`gpt-4o-mini`), `Anthropic` (`claude-3-5-sonnet`) |
 | **Embeddings** | `sentence-transformers` (`paraphrase-multilingual-MiniLM-L12-v2`) |
 | **Vector Database** | `ChromaDB` (persistent, cosine distance) |
 | **Lexical Search** | Custom `BM25Index` (tf-idf based ranker) |
@@ -182,8 +182,13 @@ docker-compose up --build -d
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `BOT_TOKEN` | — (required) | Telegram bot token from [@BotFather](https://t.me/BotFather) |
+| `LLM_PROVIDER` | `ollama` | LLM provider: `ollama`, `openai`, or `anthropic` |
 | `OLLAMA_BASE_URL` | `http://localhost:11434` | Ollama API endpoint |
 | `OLLAMA_MODEL` | `qwen2.5-coder:32b` | LLM model name |
+| `OPENAI_API_KEY` | — | OpenAI API key (required if `LLM_PROVIDER=openai`) |
+| `OPENAI_MODEL` | `gpt-4o-mini` | OpenAI model name |
+| `ANTHROPIC_API_KEY` | — | Anthropic API key (required if `LLM_PROVIDER=anthropic`) |
+| `ANTHROPIC_MODEL` | `claude-sonnet-4-20250514` | Anthropic model name |
 | `WEBAPP_URL` | `https://nico-market-catalog.loca.lt` | WebApp public URL (auto-updated by `run_all.py`) |
 | `STORAGE_BACKEND` | `memory` | Session storage adapter: `memory` (SQLite) or `postgres` |
 | `DATABASE_URL` | — | Connection string for PostgreSQL backend |
