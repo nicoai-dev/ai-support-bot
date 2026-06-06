@@ -270,6 +270,9 @@ python -m pytest tests/ -v
 | `temperature` | 0.5 | `rag/chain.py` | Температура генерации (креативность LLM) |
 | `num_predict` | 768 | `rag/chain.py` | Максимальный лимит выдачи токенов ответа |
 | `num_ctx` | 16384 | `rag/chain.py` | Выделенный размер контекстного окна LLM |
+| `MAX_ORDER_TOTAL` | 50000.0 | `config.py` | Максимальная сумма заказа |
+| `MAX_ITEM_QUANTITY` | 100 | `config.py` | Максимум единиц одного товара в заказе |
+| `MAX_ITEMS_PER_ORDER` | 50 | `config.py` | Максимум уникальных позиций в заказе |
 
 ---
 

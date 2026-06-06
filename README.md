@@ -266,6 +266,9 @@ Inline buttons: **Order status**, **Return policy**, **Contact manager**.
 | `temperature` | 0.5 | `rag/chain.py` | LLM temperature |
 | `num_predict` | 768 | `rag/chain.py` | maximum generated tokens limit |
 | `num_ctx` | 16384 | `rag/chain.py` | model context window allocation size |
+| `MAX_ORDER_TOTAL` | 50000.0 | `config.py` | maximum total cost of a single order |
+| `MAX_ITEM_QUANTITY` | 100 | `config.py` | maximum quantity of a single product item in order |
+| `MAX_ITEMS_PER_ORDER` | 50 | `config.py` | maximum number of unique items in a single order |
 
 ---
 
